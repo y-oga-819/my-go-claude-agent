@@ -24,6 +24,8 @@ go get github.com/y-oga-819/my-go-claude-agent
 
 ### ワンショットクエリ
 
+最もシンプルな使い方。プロンプトを送信し、結果を受け取ります。
+
 ```go
 package main
 
@@ -48,44 +50,144 @@ func main() {
 }
 ```
 
-### 双方向ストリーミング
+### オプション付きクエリ
 
 ```go
+result, err := claude.Query(ctx, "コードをレビューして", &claude.Options{
+    CWD:            "/path/to/project",
+    Model:          "claude-sonnet-4-5",
+    MaxTurns:       5,
+    PermissionMode: claude.PermissionModeAcceptEdits,
+    SystemPrompt:   "あなたはコードレビューの専門家です",
+})
+```
+
+### セッション継続（Resume）
+
+前回のセッションを継続して、会話の文脈を保持できます。
+
+```go
+// 最初のクエリ
+result1, err := claude.Query(ctx, "私の名前は太郎です", nil)
+if err != nil {
+    log.Fatal(err)
+}
+
+// セッションを継続して2回目のクエリ
+result2, err := claude.Query(ctx, "私の名前は？", &claude.Options{
+    Resume: result1.SessionID,
+})
+// → "太郎さんです" と回答される
+```
+
+### セッション分岐（Fork）
+
+既存のセッションから分岐して、別の方向に会話を進めることができます。
+
+```go
+result, err := claude.Query(ctx, "別のアプローチを試して", &claude.Options{
+    Resume:      "previous-session-id",
+    ForkSession: true,  // 分岐して新しいセッションを作成
+})
+```
+
+### 双方向ストリーミング
+
+対話的な通信が必要な場合に使用します。
+
+```go
+import (
+    "github.com/y-oga-819/my-go-claude-agent/claude"
+    "github.com/y-oga-819/my-go-claude-agent/internal/protocol"
+)
+
 client := claude.NewClient(&claude.Options{
     Model:    "claude-sonnet-4-5",
     MaxTurns: 10,
 })
 
-stream, err := client.Stream(ctx)
+stream, err := client.Connect(ctx)
 if err != nil {
     log.Fatal(err)
 }
 defer client.Close()
 
 // メッセージ送信
-client.Send(claude.UserMessage{Content: "ファイルを読んで"})
+err = stream.Send(ctx, "ファイルを読んで")
+if err != nil {
+    log.Fatal(err)
+}
 
 // レスポンス受信
 for msg := range stream.Messages() {
     switch m := msg.(type) {
-    case *claude.AssistantMessage:
-        for _, block := range m.Content {
+    case *protocol.AssistantMessage:
+        for _, block := range m.Message.Content {
             if block.Type == "text" {
                 fmt.Println(block.Text)
             }
         }
+    case *protocol.ResultMessage:
+        fmt.Printf("完了: %s\n", m.SessionID)
+        return
     }
 }
 ```
+
+## Options
+
+| フィールド | 型 | 説明 |
+|-----------|-----|------|
+| `CLIPath` | `string` | CLIのパス（デフォルト: "claude"） |
+| `CWD` | `string` | 作業ディレクトリ |
+| `SystemPrompt` | `string` | システムプロンプト |
+| `AppendSystemPrompt` | `string` | システムプロンプトへの追加 |
+| `Model` | `string` | 使用するモデル |
+| `MaxTurns` | `int` | 最大ターン数 |
+| `MaxBudgetUSD` | `float64` | 最大予算（USD） |
+| `PermissionMode` | `PermissionMode` | 権限モード |
+| `AllowedTools` | `[]string` | 許可するツール |
+| `DisallowedTools` | `[]string` | 禁止するツール |
+| `Resume` | `string` | 再開するセッションID |
+| `ForkSession` | `bool` | セッションを分岐するか |
+| `Continue` | `bool` | 直前のセッションを継続 |
+
+### PermissionMode
+
+| モード | 説明 |
+|--------|------|
+| `PermissionModeDefault` | デフォルト（都度確認） |
+| `PermissionModeAcceptEdits` | ファイル編集を自動許可 |
+| `PermissionModePlan` | 読み取り専用（計画モード） |
+| `PermissionModeBypassPermissions` | 全て自動許可 |
 
 ## 機能
 
 - ✅ ワンショットクエリ
 - ✅ 双方向ストリーミング
+- ✅ セッション管理（resume, fork, continue）
 - ✅ ツール権限管理（canUseTool）
 - ✅ フックシステム（PreToolUse, PostToolUse等）
 - ✅ MCP（Model Context Protocol）サーバー統合
-- ✅ セッション管理（resume, fork）
+- ✅ ファイルチェックポイント
+
+## パッケージ構成
+
+```
+claude/              # 公開API
+  ├── query.go       # ワンショットQuery
+  ├── client.go      # 双方向ストリーミングClient
+  ├── options.go     # オプション定義
+  ├── session.go     # セッション管理
+  └── errors.go      # エラー定義
+
+internal/
+  ├── transport/     # CLI通信層
+  ├── protocol/      # メッセージ・制御プロトコル
+  ├── hooks/         # フックシステム
+  ├── permission/    # 権限管理
+  └── mcp/           # MCPサーバー統合
+```
 
 ## ドキュメント
 
@@ -98,4 +200,4 @@ MIT License
 ## 参考
 
 - [anthropics/claude-agent-sdk-python](https://github.com/anthropics/claude-agent-sdk-python)
-- [Claude Code CLI Reference](https://code.claude.com/docs/en/cli-reference)
+- [Claude Code CLI Reference](https://docs.anthropic.com/en/docs/claude-code)
