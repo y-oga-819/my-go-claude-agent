@@ -6,15 +6,17 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/y-oga-819/my-go-claude-agent/internal/hooks"
 	"github.com/y-oga-819/my-go-claude-agent/internal/protocol"
 	"github.com/y-oga-819/my-go-claude-agent/internal/transport"
 )
 
 // Client はClaude CLIとの双方向ストリーミング通信を管理する
 type Client struct {
-	opts      *Options
-	transport transport.Transport
-	protocol  *protocol.ProtocolHandler
+	opts        *Options
+	transport   transport.Transport
+	protocol    *protocol.ProtocolHandler
+	hookManager *hooks.Manager
 
 	sessionID string
 
@@ -37,12 +39,18 @@ func NewClient(opts *Options) *Client {
 		opts = &Options{}
 	}
 
-	return &Client{
-		opts:      opts,
-		msgChan:   make(chan protocol.Message, 100),
-		errChan:   make(chan error, 10),
-		closeChan: make(chan struct{}),
+	c := &Client{
+		opts:        opts,
+		hookManager: hooks.NewManager(),
+		msgChan:     make(chan protocol.Message, 100),
+		errChan:     make(chan error, 10),
+		closeChan:   make(chan struct{}),
 	}
+
+	// フックを登録
+	c.registerHooks()
+
+	return c
 }
 
 // Connect はCLIに接続し、双方向ストリーミングを開始する
@@ -174,6 +182,20 @@ func (c *Client) Send(ctx context.Context, content string) error {
 
 	if c.closed || c.transport == nil {
 		return fmt.Errorf("client is not connected")
+	}
+
+	// UserPromptSubmitフックをトリガー
+	hookInput := &hooks.Input{
+		SessionID:     c.sessionID,
+		HookEventName: string(hooks.EventUserPromptSubmit),
+		CWD:           c.opts.CWD,
+	}
+	output, err := c.hookManager.Trigger(ctx, hooks.EventUserPromptSubmit, hookInput)
+	if err != nil {
+		return fmt.Errorf("hook error: %w", err)
+	}
+	if !output.Continue {
+		return fmt.Errorf("blocked by hook: %s", output.Reason)
 	}
 
 	msg := protocol.UserMessage{
@@ -354,6 +376,120 @@ func (s *Stream) Close() error {
 // SessionID は現在のセッションIDを返す
 func (s *Stream) SessionID() string {
 	return s.client.SessionID()
+}
+
+// registerHooks はOptionsからフックを登録する
+func (c *Client) registerHooks() {
+	if c.opts.Hooks == nil {
+		return
+	}
+
+	// PreToolUse
+	for _, entry := range c.opts.Hooks.PreToolUse {
+		c.hookManager.Register(hooks.EventPreToolUse, convertHookEntry(entry))
+	}
+
+	// PostToolUse
+	for _, entry := range c.opts.Hooks.PostToolUse {
+		c.hookManager.Register(hooks.EventPostToolUse, convertHookEntry(entry))
+	}
+
+	// UserPromptSubmit
+	for _, entry := range c.opts.Hooks.UserPromptSubmit {
+		c.hookManager.Register(hooks.EventUserPromptSubmit, convertHookEntry(entry))
+	}
+
+	// Notification
+	for _, entry := range c.opts.Hooks.Notification {
+		c.hookManager.Register(hooks.EventNotification, convertHookEntry(entry))
+	}
+
+	// Stop
+	for _, entry := range c.opts.Hooks.Stop {
+		c.hookManager.Register(hooks.EventStop, convertHookEntry(entry))
+	}
+
+	// SubagentStop
+	for _, entry := range c.opts.Hooks.SubagentStop {
+		c.hookManager.Register(hooks.EventSubagentStop, convertHookEntry(entry))
+	}
+
+	// PreCompact
+	for _, entry := range c.opts.Hooks.PreCompact {
+		c.hookManager.Register(hooks.EventPreCompact, convertHookEntry(entry))
+	}
+}
+
+// convertHookEntry はclaude.HookEntryをhooks.Entryに変換する
+func convertHookEntry(entry HookEntry) hooks.Entry {
+	hooksEntry := hooks.Entry{
+		Timeout: entry.Timeout,
+	}
+
+	// マッチャーを設定
+	if entry.Matcher != "" {
+		hooksEntry.Matcher = hooks.NewMatcher(entry.Matcher)
+	}
+
+	// タイプに応じて設定
+	switch entry.Type {
+	case HookTypeCommand:
+		hooksEntry.Type = hooks.HookTypeCommand
+		hooksEntry.Command = entry.Command
+	default:
+		hooksEntry.Type = hooks.HookTypeCallback
+		if entry.Callback != nil {
+			hooksEntry.Callback = func(ctx context.Context, input *hooks.Input) (*hooks.Output, error) {
+				hookInput := &HookInput{
+					HookEventName:  input.HookEventName,
+					SessionID:      input.SessionID,
+					TranscriptPath: input.TranscriptPath,
+					CWD:            input.CWD,
+					ToolName:       input.ToolName,
+					ToolInput:      input.ToolInput,
+					ToolOutput:     input.ToolOutput,
+				}
+
+				hookOutput, err := entry.Callback(ctx, hookInput)
+				if err != nil {
+					return nil, err
+				}
+
+				output := &hooks.Output{
+					Continue:       hookOutput.Continue,
+					StopReason:     hookOutput.StopReason,
+					SuppressOutput: hookOutput.SuppressOutput,
+					Decision:       hookOutput.Decision,
+					SystemMessage:  hookOutput.SystemMessage,
+					Reason:         hookOutput.Reason,
+				}
+
+				if hookOutput.HookSpecificOutput != nil {
+					output.HookSpecificOutput = &hooks.SpecificOutput{
+						HookEventName:            hookOutput.HookSpecificOutput.HookEventName,
+						PermissionDecision:       hookOutput.HookSpecificOutput.PermissionDecision,
+						PermissionDecisionReason: hookOutput.HookSpecificOutput.PermissionDecisionReason,
+						UpdatedInput:             hookOutput.HookSpecificOutput.UpdatedInput,
+						AdditionalContext:        hookOutput.HookSpecificOutput.AdditionalContext,
+					}
+				}
+
+				return output, nil
+			}
+		}
+	}
+
+	return hooksEntry
+}
+
+// TriggerHook はフックをトリガーする
+func (c *Client) TriggerHook(ctx context.Context, event hooks.Event, input *hooks.Input) (*hooks.Output, error) {
+	return c.hookManager.Trigger(ctx, event, input)
+}
+
+// HookManager はフックマネージャーを返す
+func (c *Client) HookManager() *hooks.Manager {
+	return c.hookManager
 }
 
 // Helper functions
