@@ -62,7 +62,7 @@ func (m *SystemMessage) MessageType() string { return m.Type }
 // ResultMessage は結果メッセージ
 type ResultMessage struct {
 	Type             string         `json:"type"`    // "result"
-	Subtype          string         `json:"subtype"` // "query_complete"
+	Subtype          string         `json:"subtype"` // "query_complete", "error", etc.
 	DurationMs       int64          `json:"duration_ms"`
 	DurationAPIMs    int64          `json:"duration_api_ms"`
 	IsError          bool           `json:"is_error"`
@@ -72,9 +72,64 @@ type ResultMessage struct {
 	Usage            Usage          `json:"usage"`
 	Result           string         `json:"result,omitempty"`
 	StructuredOutput map[string]any `json:"structured_output,omitempty"`
+
+	// エラー関連フィールド
+	ErrorCode    string `json:"error_code,omitempty"`
+	ErrorMessage string `json:"error_message,omitempty"`
+	ErrorType    string `json:"error_type,omitempty"`
 }
 
 func (m *ResultMessage) MessageType() string { return m.Type }
+
+// GetErrorCode はエラーコードを返す（エラーがない場合は空文字列）
+func (m *ResultMessage) GetErrorCode() string {
+	if !m.IsError {
+		return ""
+	}
+	if m.ErrorCode != "" {
+		return m.ErrorCode
+	}
+	// subtypeからエラーコードを推測
+	switch m.Subtype {
+	case "rate_limit":
+		return "rate_limit"
+	case "budget_exceeded":
+		return "budget_exceeded"
+	case "max_turns_exceeded":
+		return "max_turns_exceeded"
+	case "context_too_long":
+		return "context_too_long"
+	case "auth_error":
+		return "auth_error"
+	default:
+		return "unknown"
+	}
+}
+
+// IsRateLimitError はレート制限エラーかを判定する
+func (m *ResultMessage) IsRateLimitError() bool {
+	return m.GetErrorCode() == "rate_limit"
+}
+
+// IsBudgetExceeded は予算超過エラーかを判定する
+func (m *ResultMessage) IsBudgetExceeded() bool {
+	return m.GetErrorCode() == "budget_exceeded"
+}
+
+// IsMaxTurnsExceeded はターン数超過エラーかを判定する
+func (m *ResultMessage) IsMaxTurnsExceeded() bool {
+	return m.GetErrorCode() == "max_turns_exceeded"
+}
+
+// IsContextTooLong はコンテキスト長超過エラーかを判定する
+func (m *ResultMessage) IsContextTooLong() bool {
+	return m.GetErrorCode() == "context_too_long"
+}
+
+// IsAuthError は認証エラーかを判定する
+func (m *ResultMessage) IsAuthError() bool {
+	return m.GetErrorCode() == "auth_error"
+}
 
 // Usage はトークン使用量を表す
 type Usage struct {

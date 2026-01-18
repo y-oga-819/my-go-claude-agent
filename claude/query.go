@@ -86,10 +86,49 @@ func Query(ctx context.Context, prompt string, opts *Options) (*QueryResult, err
 				result.SessionID = m.SessionID
 				result.TotalCost = m.TotalCostUSD
 				result.Usage = m.Usage
+
+				// エラーチェック
+				if m.IsError {
+					err := resultMessageToError(m)
+					return result, err
+				}
 				// 結果を受け取ったら終了
 				return result, nil
 			}
 		}
+	}
+}
+
+// resultMessageToError はResultMessageからエラーを生成する
+func resultMessageToError(m *protocol.ResultMessage) error {
+	code := m.GetErrorCode()
+	var baseErr error
+
+	switch code {
+	case "rate_limit":
+		baseErr = ErrRateLimit
+	case "budget_exceeded":
+		baseErr = ErrBudgetExceeded
+	case "max_turns_exceeded":
+		baseErr = ErrTurnsExceeded
+	case "context_too_long":
+		baseErr = ErrContextTooLong
+	case "auth_error":
+		baseErr = ErrAuthentication
+	default:
+		baseErr = ErrProcessExited
+	}
+
+	details := m.ErrorMessage
+	if details == "" {
+		details = m.Result
+	}
+
+	return &SDKError{
+		Op:        "query",
+		Err:       baseErr,
+		Details:   details,
+		Retryable: code == "rate_limit",
 	}
 }
 
