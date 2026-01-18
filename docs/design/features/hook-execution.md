@@ -233,9 +233,15 @@ func (c *Conversation) handleToolUse(ctx context.Context, tool *protocol.ToolUse
 
 ## 完了条件
 
-- [ ] Executorがシェルコマンドを実行できる
-- [ ] JSON入出力が正しく処理される
-- [ ] タイムアウトが機能する
-- [ ] 終了コード別の処理が正しい
-- [ ] Conversationからフックがトリガーされる
-- [ ] 全テストが通過する
+- [x] Executorがシェルコマンドを実行できる
+- [x] JSON入出力が正しく処理される
+- [x] タイムアウトが機能する
+- [x] 終了コード別の処理が正しい
+- [x] Clientからフックがトリガーされる
+- [x] 全テストが通過する
+
+## 実装ノート
+
+- 設計ドキュメントでは `claude/conversation.go` への統合を想定していたが、実際には `claude/client.go` に統合
+- Clientの `Send` メソッドで `UserPromptSubmit` フックをトリガー
+- `TriggerHook` と `HookManager` メソッドを追加し、外部からもフックを操作可能に
