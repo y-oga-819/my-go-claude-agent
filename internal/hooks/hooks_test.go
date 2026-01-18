@@ -283,3 +283,122 @@ func TestManager_Trigger_SetsHookEventName(t *testing.T) {
 		t.Fatalf("Trigger failed: %v", err)
 	}
 }
+
+func TestManager_Trigger_CommandHook(t *testing.T) {
+	m := NewManager()
+
+	// コマンドフックを登録
+	m.Register(EventPreToolUse, Entry{
+		Type:    HookTypeCommand,
+		Command: `echo '{"continue": true}'`,
+	})
+
+	ctx := context.Background()
+	input := &Input{
+		SessionID: "test-session",
+		ToolName:  "Bash",
+	}
+
+	output, err := m.Trigger(ctx, EventPreToolUse, input)
+	if err != nil {
+		t.Fatalf("Trigger failed: %v", err)
+	}
+	if !output.Continue {
+		t.Error("Continue should be true")
+	}
+}
+
+func TestManager_Trigger_CommandHookBlock(t *testing.T) {
+	m := NewManager()
+
+	// ブロックするコマンドフックを登録
+	m.Register(EventPreToolUse, Entry{
+		Type:    HookTypeCommand,
+		Command: `echo "blocked" >&2; exit 2`,
+	})
+
+	ctx := context.Background()
+	input := &Input{
+		SessionID: "test-session",
+		ToolName:  "Bash",
+	}
+
+	output, err := m.Trigger(ctx, EventPreToolUse, input)
+	if err != nil {
+		t.Fatalf("Trigger failed: %v", err)
+	}
+	if output.Continue {
+		t.Error("Continue should be false for blocking hook")
+	}
+}
+
+func TestManager_Trigger_MixedHooks(t *testing.T) {
+	m := NewManager()
+
+	callbackCalled := false
+
+	// コールバックフックを登録
+	m.Register(EventPreToolUse, Entry{
+		Type: HookTypeCallback,
+		Callback: func(ctx context.Context, input *Input) (*Output, error) {
+			callbackCalled = true
+			return &Output{Continue: true}, nil
+		},
+	})
+
+	// コマンドフックを登録
+	m.Register(EventPreToolUse, Entry{
+		Type:    HookTypeCommand,
+		Command: `echo '{"continue": true}'`,
+	})
+
+	ctx := context.Background()
+	input := &Input{
+		SessionID: "test-session",
+		ToolName:  "Bash",
+	}
+
+	output, err := m.Trigger(ctx, EventPreToolUse, input)
+	if err != nil {
+		t.Fatalf("Trigger failed: %v", err)
+	}
+	if !callbackCalled {
+		t.Error("callback should be called")
+	}
+	if !output.Continue {
+		t.Error("Continue should be true")
+	}
+}
+
+func TestManager_Trigger_CommandHookWithMatcher(t *testing.T) {
+	m := NewManager()
+
+	// Bashにのみマッチするコマンドフック
+	m.Register(EventPreToolUse, Entry{
+		Type:    HookTypeCommand,
+		Matcher: NewMatcher("Bash"),
+		Command: `echo '{"continue": false, "reason": "Bash blocked"}'`,
+	})
+
+	ctx := context.Background()
+
+	// Bashツールはブロックされる
+	input := &Input{SessionID: "test-session", ToolName: "Bash"}
+	output, err := m.Trigger(ctx, EventPreToolUse, input)
+	if err != nil {
+		t.Fatalf("Trigger failed: %v", err)
+	}
+	if output.Continue {
+		t.Error("Bash should be blocked")
+	}
+
+	// Readツールは通過
+	input2 := &Input{SessionID: "test-session", ToolName: "Read"}
+	output2, err := m.Trigger(ctx, EventPreToolUse, input2)
+	if err != nil {
+		t.Fatalf("Trigger failed: %v", err)
+	}
+	if !output2.Continue {
+		t.Error("Read should continue")
+	}
+}

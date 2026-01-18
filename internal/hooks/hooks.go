@@ -3,6 +3,15 @@ package hooks
 import (
 	"context"
 	"sync"
+	"time"
+)
+
+// HookType はフックの種類
+type HookType string
+
+const (
+	HookTypeCallback HookType = "callback" // Goコールバック（既存）
+	HookTypeCommand  HookType = "command"  // シェルコマンド
 )
 
 // Event はフックイベントの種類
@@ -46,28 +55,36 @@ type SpecificOutput struct {
 	PermissionDecision       string // "allow", "deny", "ask"
 	PermissionDecisionReason string
 	UpdatedInput             map[string]any
+	AdditionalContext        string
 }
 
 // Callback はフックのコールバック関数
 type Callback func(ctx context.Context, input *Input) (*Output, error)
 
+// DefaultTimeout はフックのデフォルトタイムアウト
+const DefaultTimeout = 60 * time.Second
+
 // Entry はフックエントリ
 type Entry struct {
-	Matcher  *Matcher
-	Callback Callback
-	Timeout  int // ミリ秒
+	Type     HookType      // フックの種類（デフォルト: callback）
+	Matcher  *Matcher      // ツールマッチャー
+	Callback Callback      // Type=callback時に使用
+	Command  string        // Type=command時に使用
+	Timeout  time.Duration // タイムアウト（デフォルト: 60秒）
 }
 
 // Manager はフックを管理する
 type Manager struct {
-	hooks map[Event][]Entry
-	mu    sync.RWMutex
+	hooks    map[Event][]Entry
+	executor *Executor
+	mu       sync.RWMutex
 }
 
 // NewManager は新しいManagerを作成する
 func NewManager() *Manager {
 	return &Manager{
-		hooks: make(map[Event][]Entry),
+		hooks:    make(map[Event][]Entry),
+		executor: NewExecutor(),
 	}
 }
 
@@ -96,7 +113,26 @@ func (m *Manager) Trigger(ctx context.Context, event Event, input *Input) (*Outp
 			continue
 		}
 
-		output, err := entry.Callback(ctx, input)
+		var output *Output
+		var err error
+
+		// フックタイプに応じて実行
+		switch entry.Type {
+		case HookTypeCommand:
+			timeout := entry.Timeout
+			if timeout == 0 {
+				timeout = DefaultTimeout
+			}
+			output, err = m.executor.Execute(ctx, entry.Command, input, timeout)
+		default:
+			// callback（デフォルト）
+			if entry.Callback != nil {
+				output, err = entry.Callback(ctx, input)
+			} else {
+				continue
+			}
+		}
+
 		if err != nil {
 			return nil, err
 		}

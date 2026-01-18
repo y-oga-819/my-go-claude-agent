@@ -144,3 +144,49 @@ func TestClient_Messages_Errors_Channels(t *testing.T) {
 	// これはprotocolがnilのため
 	// 実際の使用では接続後にのみアクセスすることを想定
 }
+
+func TestClient_WithHooks(t *testing.T) {
+	opts := &Options{
+		Hooks: &HookConfig{
+			UserPromptSubmit: []HookEntry{
+				{
+					Type: HookTypeCallback,
+					Callback: func(ctx context.Context, input *HookInput) (*HookOutput, error) {
+						return &HookOutput{Continue: true}, nil
+					},
+				},
+			},
+		},
+	}
+
+	client := NewClient(opts)
+	if client.hookManager == nil {
+		t.Fatal("hookManager should be initialized")
+	}
+
+	// フックが登録されていることを確認
+	hooks := client.HookManager()
+	if hooks == nil {
+		t.Fatal("HookManager() should not return nil")
+	}
+}
+
+func TestClient_WithCommandHook(t *testing.T) {
+	opts := &Options{
+		Hooks: &HookConfig{
+			PreToolUse: []HookEntry{
+				{
+					Type:    HookTypeCommand,
+					Matcher: "Bash",
+					Command: "echo 'test'",
+					Timeout: 5 * time.Second,
+				},
+			},
+		},
+	}
+
+	client := NewClient(opts)
+	if client.hookManager == nil {
+		t.Fatal("hookManager should be initialized")
+	}
+}

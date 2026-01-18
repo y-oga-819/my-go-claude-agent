@@ -182,20 +182,62 @@ type PermissionResult struct {
 
 // HookConfig はフックの設定を表す
 type HookConfig struct {
-	PreToolUse        []HookEntry
-	PostToolUse       []HookEntry
-	UserPromptSubmit  []HookEntry
-	Notification      []HookEntry
-	Stop              []HookEntry
+	PreToolUse       []HookEntry
+	PostToolUse      []HookEntry
+	UserPromptSubmit []HookEntry
+	Notification     []HookEntry
+	Stop             []HookEntry
+	SubagentStop     []HookEntry
+	PreCompact       []HookEntry
 }
+
+// HookType はフックの種類
+type HookType string
+
+const (
+	HookTypeCallback HookType = "callback" // Goコールバック
+	HookTypeCommand  HookType = "command"  // シェルコマンド
+)
 
 // HookEntry はフックエントリを表す
 type HookEntry struct {
-	Matcher ToolMatcher
-	Timeout int // ミリ秒
+	Type     HookType      // フックの種類（デフォルト: callback）
+	Matcher  string        // ツール名パターン（正規表現対応）
+	Command  string        // Type=command時のシェルコマンド
+	Callback HookCallback  // Type=callback時のコールバック関数
+	Timeout  time.Duration // タイムアウト（デフォルト: 60秒）
 }
 
-// ToolMatcher はツールマッチングの条件を表す
-type ToolMatcher struct {
-	ToolName string // 正規表現対応
+// HookCallback はフックのコールバック関数の型
+type HookCallback func(ctx context.Context, input *HookInput) (*HookOutput, error)
+
+// HookInput はフックへの入力
+type HookInput struct {
+	HookEventName  string
+	SessionID      string
+	TranscriptPath string
+	CWD            string
+	ToolName       string
+	ToolInput      map[string]any
+	ToolOutput     map[string]any
+}
+
+// HookOutput はフックからの出力
+type HookOutput struct {
+	Continue           bool
+	StopReason         string
+	SuppressOutput     bool
+	Decision           string // "block" for explicit block
+	SystemMessage      string
+	Reason             string
+	HookSpecificOutput *HookSpecificOutput
+}
+
+// HookSpecificOutput はフック固有の出力
+type HookSpecificOutput struct {
+	HookEventName            string
+	PermissionDecision       string // "allow", "deny", "ask"
+	PermissionDecisionReason string
+	UpdatedInput             map[string]any
+	AdditionalContext        string
 }

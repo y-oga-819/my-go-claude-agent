@@ -3,6 +3,7 @@ package claude
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 func TestOptions_Defaults(t *testing.T) {
@@ -128,14 +129,20 @@ func TestHookConfig(t *testing.T) {
 	hooks := &HookConfig{
 		PreToolUse: []HookEntry{
 			{
-				Matcher: ToolMatcher{ToolName: "Bash"},
-				Timeout: 5000,
+				Type:    HookTypeCommand,
+				Matcher: "Bash",
+				Command: "echo 'test'",
+				Timeout: 5 * time.Second,
 			},
 		},
 		PostToolUse: []HookEntry{
 			{
-				Matcher: ToolMatcher{ToolName: ".*"},
-				Timeout: 1000,
+				Type:    HookTypeCallback,
+				Matcher: ".*",
+				Callback: func(ctx context.Context, input *HookInput) (*HookOutput, error) {
+					return &HookOutput{Continue: true}, nil
+				},
+				Timeout: 1 * time.Second,
 			},
 		},
 	}
@@ -143,7 +150,13 @@ func TestHookConfig(t *testing.T) {
 	if len(hooks.PreToolUse) != 1 {
 		t.Errorf("len(PreToolUse) = %d, want %d", len(hooks.PreToolUse), 1)
 	}
-	if hooks.PreToolUse[0].Timeout != 5000 {
-		t.Errorf("PreToolUse[0].Timeout = %d, want %d", hooks.PreToolUse[0].Timeout, 5000)
+	if hooks.PreToolUse[0].Timeout != 5*time.Second {
+		t.Errorf("PreToolUse[0].Timeout = %v, want %v", hooks.PreToolUse[0].Timeout, 5*time.Second)
+	}
+	if hooks.PreToolUse[0].Type != HookTypeCommand {
+		t.Errorf("PreToolUse[0].Type = %q, want %q", hooks.PreToolUse[0].Type, HookTypeCommand)
+	}
+	if hooks.PostToolUse[0].Type != HookTypeCallback {
+		t.Errorf("PostToolUse[0].Type = %q, want %q", hooks.PostToolUse[0].Type, HookTypeCallback)
 	}
 }
