@@ -1,6 +1,9 @@
 package claude
 
-import "context"
+import (
+	"context"
+	"time"
+)
 
 // Options はClaude SDKの設定を表す
 type Options struct {
@@ -37,8 +40,88 @@ type Options struct {
 	// フック設定
 	Hooks *HookConfig
 
+	// タイムアウト設定
+	Timeout *TimeoutConfig
+
+	// リトライ設定
+	Retry *RetryConfig
+
 	// コールバック
 	CanUseTool CanUseToolFunc
+}
+
+// TimeoutConfig はタイムアウトの設定
+type TimeoutConfig struct {
+	// 接続タイムアウト（CLIプロセス起動）
+	Connect time.Duration
+	// 単一リクエストのタイムアウト
+	Request time.Duration
+	// 全体タイムアウト（セッション全体）
+	Total time.Duration
+	// 制御リクエストタイムアウト
+	Control time.Duration
+}
+
+// DefaultTimeoutConfig はデフォルトのタイムアウト設定を返す
+func DefaultTimeoutConfig() *TimeoutConfig {
+	return &TimeoutConfig{
+		Connect: 30 * time.Second,
+		Request: 5 * time.Minute,
+		Total:   30 * time.Minute,
+		Control: 30 * time.Second,
+	}
+}
+
+// GetTimeout は指定された種類のタイムアウトを取得する
+func (o *Options) GetTimeout(kind string) time.Duration {
+	if o.Timeout == nil {
+		def := DefaultTimeoutConfig()
+		switch kind {
+		case "connect":
+			return def.Connect
+		case "request":
+			return def.Request
+		case "total":
+			return def.Total
+		case "control":
+			return def.Control
+		default:
+			return def.Request
+		}
+	}
+
+	switch kind {
+	case "connect":
+		if o.Timeout.Connect > 0 {
+			return o.Timeout.Connect
+		}
+		return DefaultTimeoutConfig().Connect
+	case "request":
+		if o.Timeout.Request > 0 {
+			return o.Timeout.Request
+		}
+		return DefaultTimeoutConfig().Request
+	case "total":
+		if o.Timeout.Total > 0 {
+			return o.Timeout.Total
+		}
+		return DefaultTimeoutConfig().Total
+	case "control":
+		if o.Timeout.Control > 0 {
+			return o.Timeout.Control
+		}
+		return DefaultTimeoutConfig().Control
+	default:
+		return DefaultTimeoutConfig().Request
+	}
+}
+
+// GetRetryConfig はリトライ設定を取得する
+func (o *Options) GetRetryConfig() *RetryConfig {
+	if o.Retry != nil {
+		return o.Retry
+	}
+	return nil // デフォルトではリトライしない
 }
 
 // PermissionMode は権限モードを表す

@@ -30,9 +30,11 @@ type SubprocessTransport struct {
 	errChan   chan error
 	closeChan chan struct{}
 
-	mu        sync.RWMutex
-	connected bool
-	closed    bool
+	mu            sync.RWMutex
+	connected     bool
+	closed        bool
+	processStatus *ProcessStatus
+	stderrBuf     strings.Builder
 }
 
 // NewSubprocessTransport は新しいSubprocessTransportを作成する
@@ -184,8 +186,11 @@ func (t *SubprocessTransport) readLoop() {
 func (t *SubprocessTransport) readStderr() {
 	scanner := bufio.NewScanner(t.stderr)
 	for scanner.Scan() {
-		// stderrはデバッグログとして扱う（必要に応じてログ出力）
-		_ = scanner.Text()
+		line := scanner.Text()
+		t.mu.Lock()
+		t.stderrBuf.WriteString(line)
+		t.stderrBuf.WriteString("\n")
+		t.mu.Unlock()
 	}
 }
 
@@ -193,6 +198,20 @@ func (t *SubprocessTransport) waitProcess() {
 	err := t.cmd.Wait()
 	t.mu.Lock()
 	t.connected = false
+
+	// 終了状態を保存
+	status := &ProcessStatus{}
+	if t.cmd.ProcessState != nil {
+		status.ExitCode = t.cmd.ProcessState.ExitCode()
+	}
+	status.Stderr = t.stderrBuf.String()
+
+	// シグナルによる終了を確認
+	if exitErr, ok := err.(*exec.ExitError); ok {
+		status.ExitCode = exitErr.ExitCode()
+	}
+
+	t.processStatus = status
 	t.mu.Unlock()
 
 	if err != nil {
@@ -268,4 +287,11 @@ func (t *SubprocessTransport) IsConnected() bool {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 	return t.connected && !t.closed
+}
+
+// GetProcessStatus はプロセスの終了状態を取得する
+func (t *SubprocessTransport) GetProcessStatus() *ProcessStatus {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.processStatus
 }

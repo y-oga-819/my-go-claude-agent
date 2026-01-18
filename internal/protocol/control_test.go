@@ -61,6 +61,10 @@ func (m *mockTransport) IsConnected() bool {
 	return m.connected
 }
 
+func (m *mockTransport) GetProcessStatus() *transport.ProcessStatus {
+	return nil
+}
+
 func (m *mockTransport) getWrittenData() [][]byte {
 	m.mu.Lock()
 	defer m.mu.Unlock()

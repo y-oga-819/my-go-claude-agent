@@ -9,6 +9,13 @@ type RawMessage struct {
 	Raw  []byte // 元のJSON
 }
 
+// ProcessStatus はCLIプロセスの終了状態
+type ProcessStatus struct {
+	ExitCode int    // 終了コード
+	Signal   string // シグナル（あれば）
+	Stderr   string // stderrの内容
+}
+
 // Transport はCLIとの通信を抽象化するインターフェース
 type Transport interface {
 	// Connect はCLIプロセスを起動して接続する
@@ -31,6 +38,9 @@ type Transport interface {
 
 	// IsConnected は接続状態を返す
 	IsConnected() bool
+
+	// GetProcessStatus はプロセスの終了状態を取得する
+	GetProcessStatus() *ProcessStatus
 }
 
 // Config はTransportの設定
