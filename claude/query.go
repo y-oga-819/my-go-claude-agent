@@ -135,6 +135,12 @@ func buildQueryArgs(prompt string, opts *Options) []string {
 	if opts.Resume != "" {
 		args = append(args, "--resume", opts.Resume)
 	}
+	if opts.ForkSession {
+		args = append(args, "--fork-session")
+	}
+	if opts.Continue {
+		args = append(args, "--continue")
+	}
 
 	// プロンプト（ワンショットモード）- 最後に配置
 	args = append(args, "--print", "--", prompt)

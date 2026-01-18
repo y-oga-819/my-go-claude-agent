@@ -125,6 +125,12 @@ type InterruptRequest struct {
 	Subtype string `json:"subtype"` // "interrupt"
 }
 
+// RewindFilesRequest はファイル巻き戻しリクエスト
+type RewindFilesRequest struct {
+	Subtype       string `json:"subtype"`         // "rewind_files"
+	UserMessageID string `json:"user_message_id"` // 巻き戻し先のユーザーメッセージID
+}
+
 // NewProtocolHandler は新しいProtocolHandlerを作成する
 func NewProtocolHandler(t transport.Transport) *ProtocolHandler {
 	return &ProtocolHandler{

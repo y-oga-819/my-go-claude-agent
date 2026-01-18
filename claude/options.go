@@ -26,8 +26,10 @@ type Options struct {
 	DisallowedTools []string
 
 	// セッション設定
-	Resume      string
-	ForkSession bool
+	Resume                  string // 再開するセッションID
+	ForkSession             bool   // trueで分岐、falseで継続
+	Continue                bool   // 直前のセッションを継続
+	EnableFileCheckpointing bool   // ファイルチェックポイントを有効化
 
 	// MCP設定
 	MCPServers map[string]MCPServerConfig

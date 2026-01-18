@@ -208,3 +208,63 @@ func TestQueryResult_Structure(t *testing.T) {
 		t.Errorf("SessionID = %q, want %q", result.SessionID, "test-session")
 	}
 }
+
+func TestBuildQueryArgs_SessionOptions(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     *Options
+		wantArgs []string
+	}{
+		{
+			name: "resume only",
+			opts: &Options{
+				Resume: "session-123",
+			},
+			wantArgs: []string{"--resume", "session-123"},
+		},
+		{
+			name: "resume with fork",
+			opts: &Options{
+				Resume:      "session-123",
+				ForkSession: true,
+			},
+			wantArgs: []string{"--resume", "session-123", "--fork-session"},
+		},
+		{
+			name: "continue",
+			opts: &Options{
+				Continue: true,
+			},
+			wantArgs: []string{"--continue"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := buildQueryArgs("test", tt.opts)
+
+			// 期待する引数が含まれているか確認
+			for i := 0; i < len(tt.wantArgs); i++ {
+				found := false
+				for j := 0; j < len(args); j++ {
+					if args[j] == tt.wantArgs[i] {
+						found = true
+						// 値を持つフラグの場合は次の要素も確認
+						if i+1 < len(tt.wantArgs) && j+1 < len(args) {
+							if tt.wantArgs[i] == "--resume" {
+								if args[j+1] != tt.wantArgs[i+1] {
+									t.Errorf("arg %s value = %q, want %q", tt.wantArgs[i], args[j+1], tt.wantArgs[i+1])
+								}
+								i++ // skip value
+							}
+						}
+						break
+					}
+				}
+				if !found {
+					t.Errorf("missing arg: %s", tt.wantArgs[i])
+				}
+			}
+		})
+	}
+}

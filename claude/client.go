@@ -248,6 +248,32 @@ func (c *Client) Interrupt(ctx context.Context) error {
 	return nil
 }
 
+// RewindFiles はファイルを指定したチェックポイントに巻き戻す
+func (c *Client) RewindFiles(ctx context.Context, userMessageID string) error {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+
+	if c.closed || c.protocol == nil {
+		return fmt.Errorf("client is not connected")
+	}
+
+	rewindReq := protocol.RewindFilesRequest{
+		Subtype:       "rewind_files",
+		UserMessageID: userMessageID,
+	}
+
+	resp, err := c.protocol.SendControlRequest(ctx, rewindReq)
+	if err != nil {
+		return &SDKError{Op: "rewind_files", Err: err}
+	}
+
+	if resp.Response.Subtype == "error" {
+		return &SDKError{Op: "rewind_files", Err: fmt.Errorf("rewind failed"), Details: resp.Response.Error}
+	}
+
+	return nil
+}
+
 // Messages はメッセージチャネルを返す
 func (c *Client) Messages() <-chan protocol.Message {
 	return c.protocol.Messages()
@@ -313,6 +339,11 @@ func (s *Stream) SendToolResult(ctx context.Context, toolUseID string, result an
 // Interrupt は実行を中断する
 func (s *Stream) Interrupt(ctx context.Context) error {
 	return s.client.Interrupt(ctx)
+}
+
+// RewindFiles はファイルを指定したチェックポイントに巻き戻す
+func (s *Stream) RewindFiles(ctx context.Context, userMessageID string) error {
+	return s.client.RewindFiles(ctx, userMessageID)
 }
 
 // Close はストリームをクローズする
