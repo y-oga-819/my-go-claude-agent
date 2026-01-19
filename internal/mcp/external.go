@@ -1,5 +1,11 @@
 package mcp
 
+import (
+	"context"
+	"fmt"
+	"sync"
+)
+
 // TransportType はMCPトランスポートの種類
 type TransportType string
 
@@ -52,8 +58,10 @@ func (c *ServerConfig) ToMap() map[string]any {
 
 // Manager は外部MCPサーバーを管理する
 type Manager struct {
-	servers map[string]*ServerConfig
+	servers    map[string]*ServerConfig
 	sdkServers map[string]*SDKMCPServer
+	clients    map[string]*MCPClient // 接続中のクライアント
+	mu         sync.RWMutex
 }
 
 // NewManager は新しいManagerを作成する
@@ -61,6 +69,7 @@ func NewManager() *Manager {
 	return &Manager{
 		servers:    make(map[string]*ServerConfig),
 		sdkServers: make(map[string]*SDKMCPServer),
+		clients:    make(map[string]*MCPClient),
 	}
 }
 
@@ -135,4 +144,96 @@ func (m *Manager) HandleMCPMessage(serverName string, msg *Message) (*Response, 
 		ID:    msg.ID,
 		Error: &ResponseError{Code: -32000, Message: "server not found or external server"},
 	}, nil
+}
+
+// ConnectServer は外部サーバーに接続する
+func (m *Manager) ConnectServer(ctx context.Context, name string) error {
+	m.mu.Lock()
+	config, ok := m.servers[name]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("server not found: %s", name)
+	}
+	m.mu.Unlock()
+
+	var transport Transport
+	switch config.Type {
+	case TransportStdio:
+		transport = NewStdioTransport(config)
+	case TransportHTTP, TransportSSE:
+		transport = NewHTTPTransport(config)
+	default:
+		return fmt.Errorf("unsupported transport type: %s", config.Type)
+	}
+
+	client := NewMCPClient(name, transport)
+	if err := client.Connect(ctx); err != nil {
+		return fmt.Errorf("failed to connect: %w", err)
+	}
+
+	m.mu.Lock()
+	m.clients[name] = client
+	m.mu.Unlock()
+
+	return nil
+}
+
+// DisconnectServer はサーバーから切断する
+func (m *Manager) DisconnectServer(name string) error {
+	m.mu.Lock()
+	client, ok := m.clients[name]
+	if !ok {
+		m.mu.Unlock()
+		return fmt.Errorf("client not connected: %s", name)
+	}
+	delete(m.clients, name)
+	m.mu.Unlock()
+
+	return client.Close()
+}
+
+// GetClient は接続中のクライアントを取得する
+func (m *Manager) GetClient(name string) (*MCPClient, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	client, ok := m.clients[name]
+	return client, ok
+}
+
+// CallTool はツールを呼び出す（SDK/外部両対応）
+func (m *Manager) CallTool(ctx context.Context, serverName, toolName string, args map[string]any) (*ToolResult, error) {
+	// SDKサーバーを優先
+	m.mu.RLock()
+	sdkServer, sdkOk := m.sdkServers[serverName]
+	client, clientOk := m.clients[serverName]
+	m.mu.RUnlock()
+
+	if sdkOk {
+		return sdkServer.HandleCall(toolName, args)
+	}
+
+	if clientOk {
+		return client.CallTool(ctx, toolName, args)
+	}
+
+	return nil, fmt.Errorf("server not found: %s", serverName)
+}
+
+// DisconnectAll は全ての接続を切断する
+func (m *Manager) DisconnectAll() error {
+	m.mu.Lock()
+	clients := make([]*MCPClient, 0, len(m.clients))
+	for _, c := range m.clients {
+		clients = append(clients, c)
+	}
+	m.clients = make(map[string]*MCPClient)
+	m.mu.Unlock()
+
+	var lastErr error
+	for _, c := range clients {
+		if err := c.Close(); err != nil {
+			lastErr = err
+		}
+	}
+	return lastErr
 }

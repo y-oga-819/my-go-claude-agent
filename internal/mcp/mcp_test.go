@@ -1,6 +1,7 @@
 package mcp
 
 import (
+	"context"
 	"fmt"
 	"testing"
 )
@@ -359,5 +360,61 @@ func TestTransportTypeConstants(t *testing.T) {
 		if string(tp) != expected[i] {
 			t.Errorf("type = %q, want %q", tp, expected[i])
 		}
+	}
+}
+
+func TestManager_GetClient_NotConnected(t *testing.T) {
+	m := NewManager()
+
+	_, ok := m.GetClient("unknown")
+	if ok {
+		t.Error("expected false for unknown client")
+	}
+}
+
+func TestManager_DisconnectServer_NotConnected(t *testing.T) {
+	m := NewManager()
+
+	err := m.DisconnectServer("unknown")
+	if err == nil {
+		t.Error("expected error for unknown server")
+	}
+}
+
+func TestManager_CallTool_SDKServer(t *testing.T) {
+	m := NewManager()
+
+	server := NewSDKMCPServer("calc", "1.0.0")
+	server.AddTool(Tool{
+		Name: "add",
+		Handler: func(args map[string]any) (*ToolResult, error) {
+			a := args["a"].(float64)
+			b := args["b"].(float64)
+			return &ToolResult{
+				Content: []ContentBlock{{Type: "text", Text: fmt.Sprintf("%.0f", a+b)}},
+			}, nil
+		},
+	})
+	m.AddSDKServer("calc", server)
+
+	result, err := m.CallTool(context.Background(), "calc", "add", map[string]any{"a": 1.0, "b": 2.0})
+	if err != nil {
+		t.Fatalf("CallTool failed: %v", err)
+	}
+
+	if len(result.Content) != 1 {
+		t.Fatalf("len(Content) = %d, want 1", len(result.Content))
+	}
+	if result.Content[0].Text != "3" {
+		t.Errorf("Content[0].Text = %q, want %q", result.Content[0].Text, "3")
+	}
+}
+
+func TestManager_CallTool_NotFound(t *testing.T) {
+	m := NewManager()
+
+	_, err := m.CallTool(context.Background(), "unknown", "tool", nil)
+	if err == nil {
+		t.Error("expected error for unknown server")
 	}
 }
