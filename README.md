@@ -1,12 +1,27 @@
-# my-go-claude-agent
+# Go Claude Agent SDK
 
 Go言語によるClaude Agent SDK（非公式）
 
+[![Go Version](https://img.shields.io/badge/Go-1.23+-00ADD8?style=flat&logo=go)](https://go.dev/)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 ## 概要
 
-Claude Code CLIと通信し、プログラムからClaudeのエージェント機能を利用するためのGoライブラリ。
+Claude Code CLIと通信し、プログラムからClaudeのエージェント機能を利用するためのGoライブラリです。
 
-公式Python SDK（[anthropics/claude-agent-sdk-python](https://github.com/anthropics/claude-agent-sdk-python)）の設計を参考に、同等の機能をGo言語で再実装しています。
+公式SDK（[TypeScript](https://platform.claude.com/docs/en/agent-sdk/typescript) / [Python](https://github.com/anthropics/claude-agent-sdk-python)）の設計を参考に、同等の機能をGo言語で再実装しています。
+
+### 実装状況
+
+| 領域 | 完了率 |
+|------|--------|
+| コア関数 (Query, Session) | 100% |
+| オプション | 67% |
+| フックシステム | 58% |
+| MCP統合 | 75% |
+| **総合** | **約65%** |
+
+詳細は[ロードマップ](docs/design/ROADMAP.md)を参照してください。
 
 ## 前提条件
 
@@ -62,32 +77,39 @@ result, err := claude.Query(ctx, "コードをレビューして", &claude.Optio
 })
 ```
 
-### セッション継続（Resume）
+### セッション管理
+
+#### セッション継続（Resume）
 
 前回のセッションを継続して、会話の文脈を保持できます。
 
 ```go
 // 最初のクエリ
-result1, err := claude.Query(ctx, "私の名前は太郎です", nil)
-if err != nil {
-    log.Fatal(err)
-}
+result1, _ := claude.Query(ctx, "私の名前は太郎です", nil)
 
-// セッションを継続して2回目のクエリ
-result2, err := claude.Query(ctx, "私の名前は？", &claude.Options{
+// セッションを継続
+result2, _ := claude.Query(ctx, "私の名前は？", &claude.Options{
     Resume: result1.SessionID,
 })
 // → "太郎さんです" と回答される
 ```
 
-### セッション分岐（Fork）
+#### セッション分岐（Fork）
 
-既存のセッションから分岐して、別の方向に会話を進めることができます。
+既存のセッションから分岐して、別の方向に会話を進められます。
 
 ```go
-result, err := claude.Query(ctx, "別のアプローチを試して", &claude.Options{
-    Resume:      "previous-session-id",
-    ForkSession: true,  // 分岐して新しいセッションを作成
+result, _ := claude.Query(ctx, "別のアプローチを試して", &claude.Options{
+    Resume:      previousSessionID,
+    ForkSession: true,
+})
+```
+
+#### 直前のセッションを継続（Continue）
+
+```go
+result, _ := claude.Query(ctx, "続きをお願い", &claude.Options{
+    Continue: true,
 })
 ```
 
@@ -96,11 +118,6 @@ result, err := claude.Query(ctx, "別のアプローチを試して", &claude.Op
 対話的な通信が必要な場合に使用します。
 
 ```go
-import (
-    "github.com/y-oga-819/my-go-claude-agent/claude"
-    "github.com/y-oga-819/my-go-claude-agent/internal/protocol"
-)
-
 client := claude.NewClient(&claude.Options{
     Model:    "claude-sonnet-4-5",
     MaxTurns: 10,
@@ -113,28 +130,80 @@ if err != nil {
 defer client.Close()
 
 // メッセージ送信
-err = stream.Send(ctx, "ファイルを読んで")
-if err != nil {
-    log.Fatal(err)
-}
+stream.Send(ctx, "ファイルを読んで")
 
 // レスポンス受信
 for msg := range stream.Messages() {
     switch m := msg.(type) {
     case *protocol.AssistantMessage:
-        for _, block := range m.Message.Content {
-            if block.Type == "text" {
-                fmt.Println(block.Text)
-            }
-        }
+        fmt.Println(m.GetText())
     case *protocol.ResultMessage:
-        fmt.Printf("完了: %s\n", m.SessionID)
-        return
+        fmt.Printf("完了: コスト $%.4f\n", m.TotalCostUSD)
     }
 }
 ```
 
-## Options
+### フック（Hooks）
+
+ツール実行の前後にカスタム処理を挿入できます。
+
+```go
+result, _ := claude.Query(ctx, "ファイルを編集して", &claude.Options{
+    Hooks: &hooks.HookConfig{
+        PreToolUse: []hooks.HookCallback{
+            func(input hooks.HookInput) (*hooks.HookOutput, error) {
+                fmt.Printf("ツール実行: %s\n", input.ToolName)
+                return &hooks.HookOutput{Continue: true}, nil
+            },
+        },
+        PostToolUse: []hooks.HookCallback{
+            func(input hooks.HookInput) (*hooks.HookOutput, error) {
+                fmt.Printf("ツール完了: %s\n", input.ToolName)
+                return &hooks.HookOutput{Continue: true}, nil
+            },
+        },
+    },
+})
+```
+
+### 権限管理（canUseTool）
+
+ツール使用の許可/拒否をプログラムで制御できます。
+
+```go
+result, _ := claude.Query(ctx, "ファイルを削除して", &claude.Options{
+    CanUseTool: func(toolName string, input map[string]any) (*permission.PermissionResult, error) {
+        // Bashコマンドのrmを禁止
+        if toolName == "Bash" {
+            if cmd, ok := input["command"].(string); ok && strings.Contains(cmd, "rm ") {
+                return &permission.PermissionResult{
+                    Behavior: permission.BehaviorDeny,
+                    Message:  "削除コマンドは許可されていません",
+                }, nil
+            }
+        }
+        return &permission.PermissionResult{Behavior: permission.BehaviorAllow}, nil
+    },
+})
+```
+
+### MCP（Model Context Protocol）統合
+
+外部MCPサーバーを接続して、Claudeに追加のツールを提供できます。
+
+```go
+result, _ := claude.Query(ctx, "データベースを検索して", &claude.Options{
+    MCPServers: map[string]*mcp.ServerConfig{
+        "my-database": {
+            Command: "node",
+            Args:    []string{"./mcp-server.js"},
+            Env:     map[string]string{"DB_URL": "postgres://..."},
+        },
+    },
+})
+```
+
+## Options一覧
 
 | フィールド | 型 | 説明 |
 |-----------|-----|------|
@@ -143,6 +212,7 @@ for msg := range stream.Messages() {
 | `SystemPrompt` | `string` | システムプロンプト |
 | `AppendSystemPrompt` | `string` | システムプロンプトへの追加 |
 | `Model` | `string` | 使用するモデル |
+| `FallbackModel` | `string` | フォールバックモデル |
 | `MaxTurns` | `int` | 最大ターン数 |
 | `MaxBudgetUSD` | `float64` | 最大予算（USD） |
 | `PermissionMode` | `PermissionMode` | 権限モード |
@@ -151,6 +221,10 @@ for msg := range stream.Messages() {
 | `Resume` | `string` | 再開するセッションID |
 | `ForkSession` | `bool` | セッションを分岐するか |
 | `Continue` | `bool` | 直前のセッションを継続 |
+| `FileCheckpointing` | `bool` | ファイルチェックポイントを有効化 |
+| `MCPServers` | `map[string]*ServerConfig` | MCPサーバー設定 |
+| `Hooks` | `*HookConfig` | フック設定 |
+| `CanUseTool` | `func` | ツール使用許可コールバック |
 
 ### PermissionMode
 
@@ -161,28 +235,18 @@ for msg := range stream.Messages() {
 | `PermissionModePlan` | 読み取り専用（計画モード） |
 | `PermissionModeBypassPermissions` | 全て自動許可 |
 
-## 機能
-
-- ✅ ワンショットクエリ
-- ✅ 双方向ストリーミング
-- ✅ セッション管理（resume, fork, continue）
-- ✅ ツール権限管理（canUseTool）
-- ✅ フックシステム（PreToolUse, PostToolUse等）
-- ✅ MCP（Model Context Protocol）サーバー統合
-- ✅ ファイルチェックポイント
-
 ## パッケージ構成
 
 ```
 claude/              # 公開API
   ├── query.go       # ワンショットQuery
   ├── client.go      # 双方向ストリーミングClient
-  ├── options.go     # オプション定義
   ├── session.go     # セッション管理
+  ├── options.go     # オプション定義
   └── errors.go      # エラー定義
 
 internal/
-  ├── transport/     # CLI通信層
+  ├── transport/     # CLI通信層（subprocess）
   ├── protocol/      # メッセージ・制御プロトコル
   ├── hooks/         # フックシステム
   ├── permission/    # 権限管理
@@ -191,7 +255,8 @@ internal/
 
 ## ドキュメント
 
-詳細な設計ドキュメントは [docs/design/](docs/design/) を参照してください。
+- [設計ドキュメント](docs/design/) - アーキテクチャと実装詳細
+- [ロードマップ](docs/design/ROADMAP.md) - 公式SDKとの比較と今後の実装計画
 
 ## ライセンス
 
@@ -199,5 +264,6 @@ MIT License
 
 ## 参考
 
-- [anthropics/claude-agent-sdk-python](https://github.com/anthropics/claude-agent-sdk-python)
+- [Claude Agent SDK - TypeScript](https://platform.claude.com/docs/en/agent-sdk/typescript)
+- [Claude Agent SDK - Python](https://github.com/anthropics/claude-agent-sdk-python)
 - [Claude Code CLI Reference](https://docs.anthropic.com/en/docs/claude-code)
