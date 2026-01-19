@@ -395,6 +395,88 @@ func TestInitializeRequest_JSON(t *testing.T) {
 	}
 }
 
+func TestInitializeRequest_SessionOptions(t *testing.T) {
+	req := InitializeRequest{
+		Subtype:                 "initialize",
+		Resume:                  "session-123",
+		ForkSession:             true,
+		Continue:                false,
+		EnableFileCheckpointing: true,
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var decoded InitializeRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if decoded.Resume != "session-123" {
+		t.Errorf("Resume = %q, want %q", decoded.Resume, "session-123")
+	}
+	if !decoded.ForkSession {
+		t.Error("ForkSession should be true")
+	}
+	if decoded.Continue {
+		t.Error("Continue should be false")
+	}
+	if !decoded.EnableFileCheckpointing {
+		t.Error("EnableFileCheckpointing should be true")
+	}
+}
+
+func TestInitializeRequest_SessionOptions_OmitEmpty(t *testing.T) {
+	req := InitializeRequest{
+		Subtype: "initialize",
+		// Session options are empty
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	// Empty session options should not be present
+	if _, exists := raw["resume"]; exists {
+		t.Error("resume should not be present when empty")
+	}
+	if _, exists := raw["fork_session"]; exists {
+		t.Error("fork_session should not be present when false")
+	}
+}
+
+func TestRewindFilesRequest_JSON(t *testing.T) {
+	req := RewindFilesRequest{
+		Subtype:       "rewind_files",
+		UserMessageID: "msg-uuid-123",
+	}
+
+	data, err := json.Marshal(req)
+	if err != nil {
+		t.Fatalf("marshal failed: %v", err)
+	}
+
+	var decoded RewindFilesRequest
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("unmarshal failed: %v", err)
+	}
+
+	if decoded.Subtype != "rewind_files" {
+		t.Errorf("Subtype = %q, want %q", decoded.Subtype, "rewind_files")
+	}
+	if decoded.UserMessageID != "msg-uuid-123" {
+		t.Errorf("UserMessageID = %q, want %q", decoded.UserMessageID, "msg-uuid-123")
+	}
+}
+
 func TestProtocolHandler_generateRequestID(t *testing.T) {
 	mt := newMockTransport()
 	h := NewProtocolHandler(mt)

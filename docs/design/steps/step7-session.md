@@ -114,7 +114,7 @@ sequenceDiagram
 
 ## 完了条件
 
-- [ ] --resumeでセッションを再開できる
-- [ ] --fork-sessionでセッションを分岐できる
-- [ ] ファイルチェックポイントを取得できる
-- [ ] RewindFilesでファイルを巻き戻せる
+- [x] --resumeでセッションを再開できる
+- [x] --fork-sessionでセッションを分岐できる
+- [x] ファイルチェックポイントを取得できる
+- [x] RewindFilesでファイルを巻き戻せる

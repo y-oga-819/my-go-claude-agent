@@ -125,6 +125,12 @@ func (c *Client) initialize(ctx context.Context) error {
 		MaxBudgetUSD:       c.opts.MaxBudgetUSD,
 		AllowedTools:       c.opts.AllowedTools,
 		DisallowedTools:    c.opts.DisallowedTools,
+
+		// セッション設定
+		Resume:                  c.opts.Resume,
+		ForkSession:             c.opts.ForkSession,
+		Continue:                c.opts.Continue,
+		EnableFileCheckpointing: c.opts.EnableFileCheckpointing,
 	}
 
 	if c.opts.PermissionMode != "" {
