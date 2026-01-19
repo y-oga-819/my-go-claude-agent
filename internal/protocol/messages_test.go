@@ -291,3 +291,56 @@ func TestUserMessage_WithParentToolUseID(t *testing.T) {
 		t.Errorf("ParentToolUseID = %q, want %q", *decoded.ParentToolUseID, parentID)
 	}
 }
+
+func TestUserMessage_WithUUID(t *testing.T) {
+	msg := UserMessage{
+		Type: "user",
+		Message: UserContent{
+			Role:    "user",
+			Content: "Hello",
+		},
+		SessionID: "session-123",
+		UUID:      "uuid-456-789",
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	var decoded UserMessage
+	if err := json.Unmarshal(data, &decoded); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if decoded.UUID != "uuid-456-789" {
+		t.Errorf("UUID = %q, want %q", decoded.UUID, "uuid-456-789")
+	}
+}
+
+func TestUserMessage_UUIDOmitEmpty(t *testing.T) {
+	msg := UserMessage{
+		Type: "user",
+		Message: UserContent{
+			Role:    "user",
+			Content: "Hello",
+		},
+		SessionID: "session-123",
+		// UUID is empty
+	}
+
+	data, err := json.Marshal(msg)
+	if err != nil {
+		t.Fatalf("json.Marshal failed: %v", err)
+	}
+
+	// UUIDが空の場合はJSONに含まれないことを確認
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		t.Fatalf("json.Unmarshal failed: %v", err)
+	}
+
+	if _, exists := raw["uuid"]; exists {
+		t.Error("uuid should not be present when empty")
+	}
+}

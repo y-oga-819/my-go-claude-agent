@@ -11,6 +11,7 @@ type UserMessage struct {
 	Message         UserContent `json:"message"`
 	ParentToolUseID *string     `json:"parent_tool_use_id,omitempty"`
 	SessionID       string      `json:"session_id"`
+	UUID            string      `json:"uuid,omitempty"` // ファイルチェックポイント用
 }
 
 func (m *UserMessage) MessageType() string { return m.Type }

@@ -113,6 +113,12 @@ type InitializeRequest struct {
 	MaxTurns           int               `json:"max_turns,omitempty"`
 	MaxBudgetUSD       float64           `json:"max_budget_usd,omitempty"`
 	Options            map[string]string `json:"options,omitempty"`
+
+	// セッション設定
+	Resume                  string `json:"resume,omitempty"`                    // 再開するセッションID
+	ForkSession             bool   `json:"fork_session,omitempty"`              // trueで分岐
+	Continue                bool   `json:"continue,omitempty"`                  // 直前のセッションを継続
+	EnableFileCheckpointing bool   `json:"enable_file_checkpointing,omitempty"` // ファイルチェックポイント有効化
 }
 
 // InitializeResponse は初期化レスポンス

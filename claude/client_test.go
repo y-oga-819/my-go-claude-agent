@@ -190,3 +190,37 @@ func TestClient_WithCommandHook(t *testing.T) {
 		t.Fatal("hookManager should be initialized")
 	}
 }
+
+func TestClient_WithSessionOptions(t *testing.T) {
+	opts := &Options{
+		Resume:                  "session-123",
+		ForkSession:             true,
+		Continue:                false,
+		EnableFileCheckpointing: true,
+	}
+
+	client := NewClient(opts)
+	if client.opts.Resume != "session-123" {
+		t.Errorf("Resume = %q, want %q", client.opts.Resume, "session-123")
+	}
+	if !client.opts.ForkSession {
+		t.Error("ForkSession should be true")
+	}
+	if client.opts.Continue {
+		t.Error("Continue should be false")
+	}
+	if !client.opts.EnableFileCheckpointing {
+		t.Error("EnableFileCheckpointing should be true")
+	}
+}
+
+func TestClient_RewindFiles_NotConnected(t *testing.T) {
+	client := NewClient(nil)
+
+	ctx := context.Background()
+	err := client.RewindFiles(ctx, "msg-uuid-123")
+
+	if err == nil {
+		t.Error("RewindFiles should fail when not connected")
+	}
+}
