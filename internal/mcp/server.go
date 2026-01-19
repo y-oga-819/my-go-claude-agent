@@ -154,11 +154,14 @@ func (s *SDKMCPServer) HandleMessage(msg *Message) (*Response, error) {
 }
 
 // Message はMCPメッセージ（JSON-RPC 2.0）
+// リクエスト、レスポンス、通知すべてを表現する
 type Message struct {
-	JSONRPC string `json:"jsonrpc"`
-	ID      any    `json:"id"`
-	Method  string `json:"method"`
-	Params  any    `json:"params,omitempty"`
+	JSONRPC string         `json:"jsonrpc"`
+	ID      any            `json:"id,omitempty"`     // request/response
+	Method  string         `json:"method,omitempty"` // request/notification
+	Params  any            `json:"params,omitempty"` // request
+	Result  any            `json:"result,omitempty"` // response
+	Error   *ResponseError `json:"error,omitempty"`  // response
 }
 
 // Response はMCPレスポンス
