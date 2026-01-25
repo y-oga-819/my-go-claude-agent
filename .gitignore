@@ -32,6 +32,6 @@ go.work.sum
 coverage.txt
 coverage.html
 
-# Example binaries
-tool-permission
-ask-user-question
+# Example binaries (root directory only)
+/tool-permission
+/ask-user-question
