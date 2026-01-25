@@ -45,10 +45,11 @@ type Transport interface {
 
 // Config はTransportの設定
 type Config struct {
-	CLIPath       string            // CLIのパス
-	Args          []string          // コマンドライン引数
-	Env           map[string]string // 追加の環境変数
-	CWD           string            // 作業ディレクトリ
-	StreamingMode bool              // 双方向ストリーミングモード
-	MaxBufferSize int               // JSONバッファの最大サイズ
+	CLIPath                  string            // CLIのパス
+	Args                     []string          // コマンドライン引数
+	Env                      map[string]string // 追加の環境変数
+	CWD                      string            // 作業ディレクトリ
+	StreamingMode            bool              // 双方向ストリーミングモード
+	MaxBufferSize            int               // JSONバッファの最大サイズ
+	PermissionPromptToolName string            // 権限プロンプトツール名（"stdio"でSDKに権限確認を委譲）
 }
