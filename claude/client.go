@@ -3,12 +3,18 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 
 	"github.com/y-oga-819/my-go-claude-agent/internal/hooks"
 	"github.com/y-oga-819/my-go-claude-agent/internal/protocol"
 	"github.com/y-oga-819/my-go-claude-agent/internal/transport"
+)
+
+var (
+	// ErrSessionIDNotReady はセッションIDがまだ取得できていない場合のエラー
+	ErrSessionIDNotReady = errors.New("session ID not ready: waiting for first message from CLI")
 )
 
 // Client はClaude CLIとの双方向ストリーミング通信を管理する
@@ -54,6 +60,7 @@ func NewClient(opts *Options) *Client {
 }
 
 // Connect はCLIに接続し、双方向ストリーミングを開始する
+// 注意: SessionID()は最初のメッセージを受信するまでErrSessionIDNotReadyを返す
 func (c *Client) Connect(ctx context.Context) (*Stream, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -146,14 +153,25 @@ func (c *Client) initialize(ctx context.Context) error {
 		return &SDKError{Op: "initialize", Err: fmt.Errorf("initialization failed"), Details: resp.Response.Error}
 	}
 
-	// セッションIDを取得
+	// セッションIDを取得（複数のレスポンス形式に対応）
+	c.extractSessionIDFromResponse(resp)
+
+	return nil
+}
+
+// extractSessionIDFromResponse はControlResponseからsessionIDを抽出する
+func (c *Client) extractSessionIDFromResponse(resp *protocol.ControlResponse) {
+	// 既にsessionIDが設定されている場合はスキップ
+	if c.sessionID != "" {
+		return
+	}
+
+	// Response.Responseがmap[string]anyの場合
 	if respData, ok := resp.Response.Response.(map[string]any); ok {
-		if sid, ok := respData["session_id"].(string); ok {
+		if sid, ok := respData["session_id"].(string); ok && sid != "" {
 			c.sessionID = sid
 		}
 	}
-
-	return nil
 }
 
 func (c *Client) receiveLoop(ctx context.Context) {
@@ -174,8 +192,39 @@ func (c *Client) receiveLoop(ctx context.Context) {
 				return
 			}
 
+			// ResultMessageからsessionIDを抽出
+			c.extractSessionIDFromRawMessage(rawMsg)
+
 			if err := c.protocol.HandleIncoming(ctx, rawMsg); err != nil {
 				c.errChan <- err
+			}
+		}
+	}
+}
+
+// extractSessionIDFromRawMessage はRawMessageからsessionIDを抽出し、未設定の場合に設定する
+func (c *Client) extractSessionIDFromRawMessage(rawMsg transport.RawMessage) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	// 既にsessionIDが設定されている場合はスキップ
+	if c.sessionID != "" {
+		return
+	}
+
+	// resultメッセージからsession_idを取得
+	if rawMsg.Type == "result" {
+		if sid, ok := rawMsg.Data["session_id"].(string); ok && sid != "" {
+			c.sessionID = sid
+			return
+		}
+	}
+
+	// systemメッセージからsession_idを取得
+	if rawMsg.Type == "system" {
+		if data, ok := rawMsg.Data["data"].(map[string]any); ok {
+			if sid, ok := data["session_id"].(string); ok && sid != "" {
+				c.sessionID = sid
 			}
 		}
 	}
@@ -313,10 +362,22 @@ func (c *Client) Errors() <-chan error {
 }
 
 // SessionID は現在のセッションIDを返す
-func (c *Client) SessionID() string {
+// セッションIDはCLIからの最初のメッセージ受信後に取得可能になる
+// まだ取得できていない場合はErrSessionIDNotReadyを返す
+func (c *Client) SessionID() (string, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.sessionID
+	if c.sessionID == "" {
+		return "", ErrSessionIDNotReady
+	}
+	return c.sessionID, nil
+}
+
+// SessionIDReady はセッションIDが取得可能かどうかを返す
+func (c *Client) SessionIDReady() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sessionID != ""
 }
 
 // Close はクライアントをクローズする
@@ -380,8 +441,15 @@ func (s *Stream) Close() error {
 }
 
 // SessionID は現在のセッションIDを返す
-func (s *Stream) SessionID() string {
+// セッションIDはCLIからの最初のメッセージ受信後に取得可能になる
+// まだ取得できていない場合はErrSessionIDNotReadyを返す
+func (s *Stream) SessionID() (string, error) {
 	return s.client.SessionID()
+}
+
+// SessionIDReady はセッションIDが取得可能かどうかを返す
+func (s *Stream) SessionIDReady() bool {
+	return s.client.SessionIDReady()
 }
 
 // registerHooks はOptionsからフックを登録する

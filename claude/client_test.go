@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/y-oga-819/my-go-claude-agent/internal/transport"
 )
 
 func TestNewClient(t *testing.T) {
@@ -75,9 +77,9 @@ func TestClient_Interrupt_NotConnected(t *testing.T) {
 func TestClient_SessionID_NotConnected(t *testing.T) {
 	client := NewClient(nil)
 
-	sessionID := client.SessionID()
-	if sessionID != "" {
-		t.Errorf("SessionID should be empty when not connected, got %q", sessionID)
+	_, err := client.SessionID()
+	if err != ErrSessionIDNotReady {
+		t.Errorf("SessionID should return ErrSessionIDNotReady when not connected, got %v", err)
 	}
 }
 
@@ -110,9 +112,15 @@ func TestStream_Methods(t *testing.T) {
 	client := NewClient(nil)
 	stream := &Stream{client: client}
 
-	// SessionID
-	if stream.SessionID() != "" {
-		t.Error("SessionID should be empty")
+	// SessionID - 未接続時はエラーを返す
+	_, err := stream.SessionID()
+	if err != ErrSessionIDNotReady {
+		t.Errorf("SessionID should return ErrSessionIDNotReady, got %v", err)
+	}
+
+	// SessionIDReady
+	if stream.SessionIDReady() {
+		t.Error("SessionIDReady should be false")
 	}
 
 	// Close
@@ -222,5 +230,97 @@ func TestClient_RewindFiles_NotConnected(t *testing.T) {
 
 	if err == nil {
 		t.Error("RewindFiles should fail when not connected")
+	}
+}
+
+func TestClient_ExtractSessionIDFromRawMessage_Result(t *testing.T) {
+	client := NewClient(nil)
+
+	// sessionIDが未設定の場合、resultメッセージからsession_idを抽出する
+	rawMsg := transport.RawMessage{
+		Type: "result",
+		Data: map[string]any{
+			"type":       "result",
+			"session_id": "test-session-123",
+		},
+	}
+
+	client.extractSessionIDFromRawMessage(rawMsg)
+
+	sessionID, err := client.SessionID()
+	if err != nil {
+		t.Fatalf("SessionID() returned error: %v", err)
+	}
+	if sessionID != "test-session-123" {
+		t.Errorf("SessionID() = %q, want %q", sessionID, "test-session-123")
+	}
+}
+
+func TestClient_ExtractSessionIDFromRawMessage_System(t *testing.T) {
+	client := NewClient(nil)
+
+	// systemメッセージからsession_idを抽出する
+	rawMsg := transport.RawMessage{
+		Type: "system",
+		Data: map[string]any{
+			"type": "system",
+			"data": map[string]any{
+				"session_id": "system-session-456",
+			},
+		},
+	}
+
+	client.extractSessionIDFromRawMessage(rawMsg)
+
+	sessionID, err := client.SessionID()
+	if err != nil {
+		t.Fatalf("SessionID() returned error: %v", err)
+	}
+	if sessionID != "system-session-456" {
+		t.Errorf("SessionID() = %q, want %q", sessionID, "system-session-456")
+	}
+}
+
+func TestClient_ExtractSessionIDFromRawMessage_AlreadySet(t *testing.T) {
+	client := NewClient(nil)
+	client.sessionID = "existing-session"
+
+	// 既にsessionIDが設定されている場合は上書きしない
+	rawMsg := transport.RawMessage{
+		Type: "result",
+		Data: map[string]any{
+			"type":       "result",
+			"session_id": "new-session-789",
+		},
+	}
+
+	client.extractSessionIDFromRawMessage(rawMsg)
+
+	sessionID, err := client.SessionID()
+	if err != nil {
+		t.Fatalf("SessionID() returned error: %v", err)
+	}
+	if sessionID != "existing-session" {
+		t.Errorf("SessionID() = %q, want %q", sessionID, "existing-session")
+	}
+}
+
+func TestClient_ExtractSessionIDFromRawMessage_EmptySessionID(t *testing.T) {
+	client := NewClient(nil)
+
+	// 空のsession_idは無視される
+	rawMsg := transport.RawMessage{
+		Type: "result",
+		Data: map[string]any{
+			"type":       "result",
+			"session_id": "",
+		},
+	}
+
+	client.extractSessionIDFromRawMessage(rawMsg)
+
+	_, err := client.SessionID()
+	if err != ErrSessionIDNotReady {
+		t.Errorf("SessionID() should return ErrSessionIDNotReady, got %v", err)
 	}
 }
