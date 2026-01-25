@@ -498,3 +498,174 @@ func TestProtocolHandler_generateRequestID(t *testing.T) {
 		t.Errorf("id2 = %q, want %q", id2, "sdk-2")
 	}
 }
+
+func TestProtocolHandler_HandleIncoming_AskUserQuestion(t *testing.T) {
+	mt := newMockTransport()
+	h := NewProtocolHandler(mt)
+
+	// AskUserQuestionを処理するコールバックを設定
+	h.SetCanUseToolCallback(func(ctx context.Context, req *CanUseToolRequest) (*CanUseToolResponse, error) {
+		if req.ToolName != "AskUserQuestion" {
+			t.Errorf("ToolName = %q, want %q", req.ToolName, "AskUserQuestion")
+		}
+
+		// inputからquestionsを取得
+		questions, ok := req.Input["questions"].([]any)
+		if !ok {
+			t.Fatal("questions not found in input")
+		}
+		if len(questions) != 1 {
+			t.Errorf("len(questions) = %d, want 1", len(questions))
+		}
+
+		// 回答を含めてUpdatedInputを返す
+		return &CanUseToolResponse{
+			Allow: true,
+			UpdatedInput: map[string]any{
+				"questions": req.Input["questions"],
+				"answers": map[string]string{
+					"How should I format the output?": "Summary",
+				},
+			},
+		}, nil
+	})
+
+	raw := transport.RawMessage{
+		Type: "control_request",
+		Data: map[string]any{
+			"type":       "control_request",
+			"request_id": "ask-123",
+			"request": map[string]any{
+				"subtype":   "can_use_tool",
+				"tool_name": "AskUserQuestion",
+				"input": map[string]any{
+					"questions": []any{
+						map[string]any{
+							"question": "How should I format the output?",
+							"header":   "Format",
+							"options": []any{
+								map[string]any{"label": "Summary", "description": "Brief overview"},
+								map[string]any{"label": "Detailed", "description": "Full explanation"},
+							},
+							"multiSelect": false,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	if err := h.HandleIncoming(ctx, raw); err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+
+	// レスポンスが書き込まれていることを確認
+	written := mt.getWrittenData()
+	if len(written) != 1 {
+		t.Fatalf("expected 1 written message, got %d", len(written))
+	}
+
+	var resp ControlResponse
+	if err := json.Unmarshal(written[0], &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if resp.Response.Subtype != "success" {
+		t.Errorf("Response.Subtype = %q, want %q", resp.Response.Subtype, "success")
+	}
+
+	// レスポンスにUpdatedInputが含まれていることを確認
+	respData, ok := resp.Response.Response.(*CanUseToolResponse)
+	if !ok {
+		// JSONからデコードされた場合はmap[string]anyになる
+		respMap, ok := resp.Response.Response.(map[string]any)
+		if !ok {
+			t.Fatalf("unexpected response type: %T", resp.Response.Response)
+		}
+		updatedInput, ok := respMap["updated_input"].(map[string]any)
+		if !ok {
+			t.Fatal("updated_input not found in response")
+		}
+		answers, ok := updatedInput["answers"].(map[string]any)
+		if !ok {
+			t.Fatal("answers not found in updated_input")
+		}
+		if answers["How should I format the output?"] != "Summary" {
+			t.Errorf("answer = %v, want %q", answers["How should I format the output?"], "Summary")
+		}
+	} else {
+		if respData.UpdatedInput == nil {
+			t.Fatal("UpdatedInput should not be nil")
+		}
+		answers, ok := respData.UpdatedInput["answers"].(map[string]string)
+		if !ok {
+			t.Fatal("answers not found in UpdatedInput")
+		}
+		if answers["How should I format the output?"] != "Summary" {
+			t.Errorf("answer = %q, want %q", answers["How should I format the output?"], "Summary")
+		}
+	}
+}
+
+func TestProtocolHandler_HandleIncoming_AskUserQuestion_MultiSelect(t *testing.T) {
+	mt := newMockTransport()
+	h := NewProtocolHandler(mt)
+
+	// マルチセレクトのテスト
+	h.SetCanUseToolCallback(func(ctx context.Context, req *CanUseToolRequest) (*CanUseToolResponse, error) {
+		return &CanUseToolResponse{
+			Allow: true,
+			UpdatedInput: map[string]any{
+				"questions": req.Input["questions"],
+				"answers": map[string]string{
+					"Which sections should I include?": "Introduction, Conclusion",
+				},
+			},
+		}, nil
+	})
+
+	raw := transport.RawMessage{
+		Type: "control_request",
+		Data: map[string]any{
+			"type":       "control_request",
+			"request_id": "ask-multi-123",
+			"request": map[string]any{
+				"subtype":   "can_use_tool",
+				"tool_name": "AskUserQuestion",
+				"input": map[string]any{
+					"questions": []any{
+						map[string]any{
+							"question": "Which sections should I include?",
+							"header":   "Sections",
+							"options": []any{
+								map[string]any{"label": "Introduction", "description": "Opening context"},
+								map[string]any{"label": "Conclusion", "description": "Final summary"},
+							},
+							"multiSelect": true,
+						},
+					},
+				},
+			},
+		},
+	}
+
+	ctx := context.Background()
+	if err := h.HandleIncoming(ctx, raw); err != nil {
+		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+
+	written := mt.getWrittenData()
+	if len(written) != 1 {
+		t.Fatalf("expected 1 written message, got %d", len(written))
+	}
+
+	var resp ControlResponse
+	if err := json.Unmarshal(written[0], &resp); err != nil {
+		t.Fatalf("unmarshal response: %v", err)
+	}
+
+	if resp.Response.Subtype != "success" {
+		t.Errorf("Response.Subtype = %q, want %q", resp.Response.Subtype, "success")
+	}
+}
