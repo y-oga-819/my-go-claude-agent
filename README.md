@@ -310,6 +310,15 @@ internal/
   └── mcp/           # MCPサーバー統合
 ```
 
+## サンプル
+
+`examples/`ディレクトリにサンプルコードがあります。
+
+| サンプル | 説明 | 実行 |
+|---------|------|------|
+| [tool-permission](examples/tool-permission/) | ツール使用許可の対話的確認 | `go run examples/tool-permission/main.go` |
+| [ask-user-question](examples/ask-user-question/) | AskUserQuestionツールの処理 | `go run examples/ask-user-question/main.go` |
+
 ## ドキュメント
 
 - [設計ドキュメント](docs/design/) - アーキテクチャと実装詳細
