@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 	"time"
+
+	"github.com/y-oga-819/my-go-claude-agent/internal/transport"
 )
 
 func TestNewClient(t *testing.T) {
@@ -222,5 +224,84 @@ func TestClient_RewindFiles_NotConnected(t *testing.T) {
 
 	if err == nil {
 		t.Error("RewindFiles should fail when not connected")
+	}
+}
+
+func TestClient_ExtractSessionIDFromRawMessage_Result(t *testing.T) {
+	client := NewClient(nil)
+
+	// sessionIDが未設定の場合、resultメッセージからsession_idを抽出する
+	rawMsg := transport.RawMessage{
+		Type: "result",
+		Data: map[string]any{
+			"type":       "result",
+			"session_id": "test-session-123",
+		},
+	}
+
+	client.extractSessionIDFromRawMessage(rawMsg)
+
+	if client.SessionID() != "test-session-123" {
+		t.Errorf("SessionID() = %q, want %q", client.SessionID(), "test-session-123")
+	}
+}
+
+func TestClient_ExtractSessionIDFromRawMessage_System(t *testing.T) {
+	client := NewClient(nil)
+
+	// systemメッセージからsession_idを抽出する
+	rawMsg := transport.RawMessage{
+		Type: "system",
+		Data: map[string]any{
+			"type": "system",
+			"data": map[string]any{
+				"session_id": "system-session-456",
+			},
+		},
+	}
+
+	client.extractSessionIDFromRawMessage(rawMsg)
+
+	if client.SessionID() != "system-session-456" {
+		t.Errorf("SessionID() = %q, want %q", client.SessionID(), "system-session-456")
+	}
+}
+
+func TestClient_ExtractSessionIDFromRawMessage_AlreadySet(t *testing.T) {
+	client := NewClient(nil)
+	client.sessionID = "existing-session"
+
+	// 既にsessionIDが設定されている場合は上書きしない
+	rawMsg := transport.RawMessage{
+		Type: "result",
+		Data: map[string]any{
+			"type":       "result",
+			"session_id": "new-session-789",
+		},
+	}
+
+	client.extractSessionIDFromRawMessage(rawMsg)
+
+	if client.SessionID() != "existing-session" {
+		t.Errorf("SessionID() = %q, want %q", client.SessionID(), "existing-session")
+	}
+}
+
+func TestClient_ExtractSessionIDFromRawMessage_EmptySessionID(t *testing.T) {
+	client := NewClient(nil)
+
+	// 空のsession_idは無視される
+	rawMsg := transport.RawMessage{
+		Type: "result",
+		Data: map[string]any{
+			"type":       "result",
+			"session_id": "",
+		},
+	}
+
+	client.extractSessionIDFromRawMessage(rawMsg)
+
+	if client.SessionID() != "" {
+		t.Errorf("SessionID() = %q, want empty", client.SessionID())
 	}
 }
