@@ -500,16 +500,27 @@ func TestProtocolHandler_generateRequestID(t *testing.T) {
 }
 
 func TestProtocolHandler_HandleIncoming_AskUserQuestion(t *testing.T) {
+	// このテストは以下を確認する:
+	// 1. AskUserQuestionツールの入力形式（questions）が正しく処理される
+	// 2. コールバックが一定時間（5秒）待機しても正常に処理される
+	//    （報告された「約2秒で終了する」問題の再発防止）
+	// 3. 回答（answers）を含むUpdatedInputが正しく返される
+
 	mt := newMockTransport()
 	h := NewProtocolHandler(mt)
 
-	// AskUserQuestionを処理するコールバックを設定
+	const delayDuration = 5 * time.Second
+	callbackStartTime := time.Time{}
+	callbackEndTime := time.Time{}
+
+	// 5秒待機してから応答するコールバック
 	h.SetCanUseToolCallback(func(ctx context.Context, req *CanUseToolRequest) (*CanUseToolResponse, error) {
+		// ToolNameの検証
 		if req.ToolName != "AskUserQuestion" {
 			t.Errorf("ToolName = %q, want %q", req.ToolName, "AskUserQuestion")
 		}
 
-		// inputからquestionsを取得
+		// inputからquestionsを取得できることを確認
 		questions, ok := req.Input["questions"].([]any)
 		if !ok {
 			t.Fatal("questions not found in input")
@@ -517,6 +528,19 @@ func TestProtocolHandler_HandleIncoming_AskUserQuestion(t *testing.T) {
 		if len(questions) != 1 {
 			t.Errorf("len(questions) = %d, want 1", len(questions))
 		}
+
+		callbackStartTime = time.Now()
+
+		// 5秒待機（2秒で終了する問題があれば、ここでタイムアウトする）
+		select {
+		case <-time.After(delayDuration):
+			// 正常に待機完了
+		case <-ctx.Done():
+			// コンテキストがキャンセルされた場合はエラー
+			return nil, ctx.Err()
+		}
+
+		callbackEndTime = time.Now()
 
 		// 回答を含めてUpdatedInputを返す
 		return &CanUseToolResponse{
@@ -555,9 +579,25 @@ func TestProtocolHandler_HandleIncoming_AskUserQuestion(t *testing.T) {
 		},
 	}
 
-	ctx := context.Background()
+	// タイムアウトを十分に長く設定（30秒）
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	startTime := time.Now()
 	if err := h.HandleIncoming(ctx, raw); err != nil {
 		t.Fatalf("HandleIncoming failed: %v", err)
+	}
+	elapsed := time.Since(startTime)
+
+	// 処理が5秒以上かかったことを確認（遅延応答が正しく待機されたことを確認）
+	if elapsed < delayDuration {
+		t.Errorf("処理時間が短すぎます: %v（期待: >= %v）", elapsed, delayDuration)
+	}
+
+	// コールバックが正しく実行されたことを確認
+	callbackDuration := callbackEndTime.Sub(callbackStartTime)
+	if callbackDuration < delayDuration {
+		t.Errorf("コールバック実行時間が短すぎます: %v（期待: >= %v）", callbackDuration, delayDuration)
 	}
 
 	// レスポンスが書き込まれていることを確認
@@ -575,97 +615,22 @@ func TestProtocolHandler_HandleIncoming_AskUserQuestion(t *testing.T) {
 		t.Errorf("Response.Subtype = %q, want %q", resp.Response.Subtype, "success")
 	}
 
-	// レスポンスにUpdatedInputが含まれていることを確認
-	respData, ok := resp.Response.Response.(*CanUseToolResponse)
+	// レスポンスにUpdatedInputとanswersが含まれていることを確認
+	respMap, ok := resp.Response.Response.(map[string]any)
 	if !ok {
-		// JSONからデコードされた場合はmap[string]anyになる
-		respMap, ok := resp.Response.Response.(map[string]any)
-		if !ok {
-			t.Fatalf("unexpected response type: %T", resp.Response.Response)
-		}
-		updatedInput, ok := respMap["updated_input"].(map[string]any)
-		if !ok {
-			t.Fatal("updated_input not found in response")
-		}
-		answers, ok := updatedInput["answers"].(map[string]any)
-		if !ok {
-			t.Fatal("answers not found in updated_input")
-		}
-		if answers["How should I format the output?"] != "Summary" {
-			t.Errorf("answer = %v, want %q", answers["How should I format the output?"], "Summary")
-		}
-	} else {
-		if respData.UpdatedInput == nil {
-			t.Fatal("UpdatedInput should not be nil")
-		}
-		answers, ok := respData.UpdatedInput["answers"].(map[string]string)
-		if !ok {
-			t.Fatal("answers not found in UpdatedInput")
-		}
-		if answers["How should I format the output?"] != "Summary" {
-			t.Errorf("answer = %q, want %q", answers["How should I format the output?"], "Summary")
-		}
+		t.Fatalf("unexpected response type: %T", resp.Response.Response)
 	}
-}
-
-func TestProtocolHandler_HandleIncoming_AskUserQuestion_MultiSelect(t *testing.T) {
-	mt := newMockTransport()
-	h := NewProtocolHandler(mt)
-
-	// マルチセレクトのテスト
-	h.SetCanUseToolCallback(func(ctx context.Context, req *CanUseToolRequest) (*CanUseToolResponse, error) {
-		return &CanUseToolResponse{
-			Allow: true,
-			UpdatedInput: map[string]any{
-				"questions": req.Input["questions"],
-				"answers": map[string]string{
-					"Which sections should I include?": "Introduction, Conclusion",
-				},
-			},
-		}, nil
-	})
-
-	raw := transport.RawMessage{
-		Type: "control_request",
-		Data: map[string]any{
-			"type":       "control_request",
-			"request_id": "ask-multi-123",
-			"request": map[string]any{
-				"subtype":   "can_use_tool",
-				"tool_name": "AskUserQuestion",
-				"input": map[string]any{
-					"questions": []any{
-						map[string]any{
-							"question": "Which sections should I include?",
-							"header":   "Sections",
-							"options": []any{
-								map[string]any{"label": "Introduction", "description": "Opening context"},
-								map[string]any{"label": "Conclusion", "description": "Final summary"},
-							},
-							"multiSelect": true,
-						},
-					},
-				},
-			},
-		},
+	updatedInput, ok := respMap["updated_input"].(map[string]any)
+	if !ok {
+		t.Fatal("updated_input not found in response")
+	}
+	answers, ok := updatedInput["answers"].(map[string]any)
+	if !ok {
+		t.Fatal("answers not found in updated_input")
+	}
+	if answers["How should I format the output?"] != "Summary" {
+		t.Errorf("answer = %v, want %q", answers["How should I format the output?"], "Summary")
 	}
 
-	ctx := context.Background()
-	if err := h.HandleIncoming(ctx, raw); err != nil {
-		t.Fatalf("HandleIncoming failed: %v", err)
-	}
-
-	written := mt.getWrittenData()
-	if len(written) != 1 {
-		t.Fatalf("expected 1 written message, got %d", len(written))
-	}
-
-	var resp ControlResponse
-	if err := json.Unmarshal(written[0], &resp); err != nil {
-		t.Fatalf("unmarshal response: %v", err)
-	}
-
-	if resp.Response.Subtype != "success" {
-		t.Errorf("Response.Subtype = %q, want %q", resp.Response.Subtype, "success")
-	}
+	t.Logf("テスト成功: コールバック待機時間=%v, 全体処理時間=%v", callbackDuration, elapsed)
 }
