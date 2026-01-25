@@ -139,9 +139,66 @@ for msg := range stream.Messages() {
         fmt.Println(m.GetText())
     case *protocol.ResultMessage:
         fmt.Printf("完了: コスト $%.4f\n", m.TotalCostUSD)
+
+        // SessionIDはメッセージ受信後に取得可能
+        if sessionID, err := stream.SessionID(); err == nil {
+            fmt.Printf("Session: %s\n", sessionID)
+        }
     }
 }
 ```
+
+#### セッションの状態遷移
+
+```mermaid
+stateDiagram-v2
+    [*] --> Created: NewClient()
+    Created --> Connected: Connect()
+    Connected --> SessionReady: 最初のメッセージ受信
+    SessionReady --> SessionReady: メッセージ送受信
+    SessionReady --> Closed: Close()
+    Connected --> Closed: Close()
+    Closed --> [*]
+
+    note right of Connected
+        SessionID()はErrSessionIDNotReadyを返す
+    end note
+
+    note right of SessionReady
+        SessionID()でセッションIDを取得可能
+    end note
+```
+
+#### SessionIDの取得タイミング
+
+`SessionID()`はCLIからの**最初のメッセージ受信後**に取得可能になります。
+
+```go
+stream, _ := client.Connect(ctx)
+
+// ❌ この時点ではエラー（セッションIDが未確定）
+sessionID, err := stream.SessionID()
+// err == claude.ErrSessionIDNotReady
+
+// メッセージ送受信
+stream.Send(ctx, "Hello")
+<-stream.Messages()  // 最初のメッセージを受信
+
+// ✅ メッセージ受信後は取得可能
+sessionID, err = stream.SessionID()
+// err == nil, sessionID == "eb0d8754-6f07-4566-b82e-..."
+
+// SessionIDReady()で事前チェックも可能
+if stream.SessionIDReady() {
+    sessionID, _ := stream.SessionID()
+    // ...
+}
+```
+
+| メソッド | 説明 |
+|----------|------|
+| `SessionID() (string, error)` | セッションIDを返す。未確定時は`ErrSessionIDNotReady`を返す |
+| `SessionIDReady() bool` | セッションIDが取得可能かどうかを返す |
 
 ### フック（Hooks）
 

@@ -77,9 +77,9 @@ func TestClient_Interrupt_NotConnected(t *testing.T) {
 func TestClient_SessionID_NotConnected(t *testing.T) {
 	client := NewClient(nil)
 
-	sessionID := client.SessionID()
-	if sessionID != "" {
-		t.Errorf("SessionID should be empty when not connected, got %q", sessionID)
+	_, err := client.SessionID()
+	if err != ErrSessionIDNotReady {
+		t.Errorf("SessionID should return ErrSessionIDNotReady when not connected, got %v", err)
 	}
 }
 
@@ -112,9 +112,15 @@ func TestStream_Methods(t *testing.T) {
 	client := NewClient(nil)
 	stream := &Stream{client: client}
 
-	// SessionID
-	if stream.SessionID() != "" {
-		t.Error("SessionID should be empty")
+	// SessionID - 未接続時はエラーを返す
+	_, err := stream.SessionID()
+	if err != ErrSessionIDNotReady {
+		t.Errorf("SessionID should return ErrSessionIDNotReady, got %v", err)
+	}
+
+	// SessionIDReady
+	if stream.SessionIDReady() {
+		t.Error("SessionIDReady should be false")
 	}
 
 	// Close
@@ -241,8 +247,12 @@ func TestClient_ExtractSessionIDFromRawMessage_Result(t *testing.T) {
 
 	client.extractSessionIDFromRawMessage(rawMsg)
 
-	if client.SessionID() != "test-session-123" {
-		t.Errorf("SessionID() = %q, want %q", client.SessionID(), "test-session-123")
+	sessionID, err := client.SessionID()
+	if err != nil {
+		t.Fatalf("SessionID() returned error: %v", err)
+	}
+	if sessionID != "test-session-123" {
+		t.Errorf("SessionID() = %q, want %q", sessionID, "test-session-123")
 	}
 }
 
@@ -262,8 +272,12 @@ func TestClient_ExtractSessionIDFromRawMessage_System(t *testing.T) {
 
 	client.extractSessionIDFromRawMessage(rawMsg)
 
-	if client.SessionID() != "system-session-456" {
-		t.Errorf("SessionID() = %q, want %q", client.SessionID(), "system-session-456")
+	sessionID, err := client.SessionID()
+	if err != nil {
+		t.Fatalf("SessionID() returned error: %v", err)
+	}
+	if sessionID != "system-session-456" {
+		t.Errorf("SessionID() = %q, want %q", sessionID, "system-session-456")
 	}
 }
 
@@ -282,8 +296,12 @@ func TestClient_ExtractSessionIDFromRawMessage_AlreadySet(t *testing.T) {
 
 	client.extractSessionIDFromRawMessage(rawMsg)
 
-	if client.SessionID() != "existing-session" {
-		t.Errorf("SessionID() = %q, want %q", client.SessionID(), "existing-session")
+	sessionID, err := client.SessionID()
+	if err != nil {
+		t.Fatalf("SessionID() returned error: %v", err)
+	}
+	if sessionID != "existing-session" {
+		t.Errorf("SessionID() = %q, want %q", sessionID, "existing-session")
 	}
 }
 
@@ -301,7 +319,8 @@ func TestClient_ExtractSessionIDFromRawMessage_EmptySessionID(t *testing.T) {
 
 	client.extractSessionIDFromRawMessage(rawMsg)
 
-	if client.SessionID() != "" {
-		t.Errorf("SessionID() = %q, want empty", client.SessionID())
+	_, err := client.SessionID()
+	if err != ErrSessionIDNotReady {
+		t.Errorf("SessionID() should return ErrSessionIDNotReady, got %v", err)
 	}
 }

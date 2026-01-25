@@ -3,18 +3,18 @@ package claude
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
-	"time"
 
 	"github.com/y-oga-819/my-go-claude-agent/internal/hooks"
 	"github.com/y-oga-819/my-go-claude-agent/internal/protocol"
 	"github.com/y-oga-819/my-go-claude-agent/internal/transport"
 )
 
-const (
-	// SessionIDWaitTimeout はsession_idの取得を待つ最大時間
-	SessionIDWaitTimeout = 10 * time.Second
+var (
+	// ErrSessionIDNotReady はセッションIDがまだ取得できていない場合のエラー
+	ErrSessionIDNotReady = errors.New("session ID not ready: waiting for first message from CLI")
 )
 
 // Client はClaude CLIとの双方向ストリーミング通信を管理する
@@ -24,8 +24,7 @@ type Client struct {
 	protocol    *protocol.ProtocolHandler
 	hookManager *hooks.Manager
 
-	sessionID      string
-	sessionIDReady chan struct{} // session_idが設定されたことを通知
+	sessionID string
 
 	msgChan   chan protocol.Message
 	errChan   chan error
@@ -47,12 +46,11 @@ func NewClient(opts *Options) *Client {
 	}
 
 	c := &Client{
-		opts:           opts,
-		hookManager:    hooks.NewManager(),
-		sessionIDReady: make(chan struct{}),
-		msgChan:        make(chan protocol.Message, 100),
-		errChan:        make(chan error, 10),
-		closeChan:      make(chan struct{}),
+		opts:        opts,
+		hookManager: hooks.NewManager(),
+		msgChan:     make(chan protocol.Message, 100),
+		errChan:     make(chan error, 10),
+		closeChan:   make(chan struct{}),
 	}
 
 	// フックを登録
@@ -62,28 +60,13 @@ func NewClient(opts *Options) *Client {
 }
 
 // Connect はCLIに接続し、双方向ストリーミングを開始する
+// 注意: SessionID()は最初のメッセージを受信するまでErrSessionIDNotReadyを返す
 func (c *Client) Connect(ctx context.Context) (*Stream, error) {
-	// 初期化処理（ロックが必要）
-	if err := c.connectInternal(ctx); err != nil {
-		return nil, err
-	}
-
-	// session_idが設定されるのを待つ（ロックなしで待機）
-	if err := c.waitForSessionID(ctx); err != nil {
-		// session_idの取得に失敗してもエラーにはしない（接続自体は成功している）
-		// ログ出力などで警告を出すことを検討
-	}
-
-	return &Stream{client: c}, nil
-}
-
-// connectInternal は内部接続処理を行う
-func (c *Client) connectInternal(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
 	if c.closed {
-		return fmt.Errorf("client is closed")
+		return nil, fmt.Errorf("client is closed")
 	}
 
 	// Transport設定
@@ -97,7 +80,7 @@ func (c *Client) connectInternal(ctx context.Context) error {
 
 	// 接続
 	if err := c.transport.Connect(ctx); err != nil {
-		return &SDKError{Op: "connect", Err: ErrCLIConnection, Details: err.Error()}
+		return nil, &SDKError{Op: "connect", Err: ErrCLIConnection, Details: err.Error()}
 	}
 
 	// プロトコルハンドラを作成
@@ -133,36 +116,10 @@ func (c *Client) connectInternal(ctx context.Context) error {
 	// 初期化リクエストを送信
 	if err := c.initialize(ctx); err != nil {
 		c.transport.Close()
-		return err
+		return nil, err
 	}
 
-	return nil
-}
-
-// waitForSessionID はsession_idが設定されるのを待つ
-func (c *Client) waitForSessionID(ctx context.Context) error {
-	// 既にsession_idが設定されている場合は即座に返す
-	c.mu.RLock()
-	if c.sessionID != "" {
-		c.mu.RUnlock()
-		return nil
-	}
-	c.mu.RUnlock()
-
-	// タイムアウト付きで待機
-	timeout := time.NewTimer(SessionIDWaitTimeout)
-	defer timeout.Stop()
-
-	select {
-	case <-c.sessionIDReady:
-		return nil
-	case <-timeout.C:
-		return fmt.Errorf("timeout waiting for session_id")
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-c.closeChan:
-		return fmt.Errorf("client closed")
-	}
+	return &Stream{client: c}, nil
 }
 
 func (c *Client) initialize(ctx context.Context) error {
@@ -213,8 +170,6 @@ func (c *Client) extractSessionIDFromResponse(resp *protocol.ControlResponse) {
 	if respData, ok := resp.Response.Response.(map[string]any); ok {
 		if sid, ok := respData["session_id"].(string); ok && sid != "" {
 			c.sessionID = sid
-			c.notifySessionIDReady()
-			return
 		}
 	}
 }
@@ -257,12 +212,11 @@ func (c *Client) extractSessionIDFromRawMessage(rawMsg transport.RawMessage) {
 		return
 	}
 
-	var sessionID string
-
 	// resultメッセージからsession_idを取得
 	if rawMsg.Type == "result" {
 		if sid, ok := rawMsg.Data["session_id"].(string); ok && sid != "" {
-			sessionID = sid
+			c.sessionID = sid
+			return
 		}
 	}
 
@@ -270,25 +224,9 @@ func (c *Client) extractSessionIDFromRawMessage(rawMsg transport.RawMessage) {
 	if rawMsg.Type == "system" {
 		if data, ok := rawMsg.Data["data"].(map[string]any); ok {
 			if sid, ok := data["session_id"].(string); ok && sid != "" {
-				sessionID = sid
+				c.sessionID = sid
 			}
 		}
-	}
-
-	// session_idが見つかった場合、設定してチャネルを閉じる
-	if sessionID != "" {
-		c.sessionID = sessionID
-		c.notifySessionIDReady()
-	}
-}
-
-// notifySessionIDReady はsession_idが設定されたことを通知する
-func (c *Client) notifySessionIDReady() {
-	select {
-	case <-c.sessionIDReady:
-		// 既に閉じられている
-	default:
-		close(c.sessionIDReady)
 	}
 }
 
@@ -424,10 +362,22 @@ func (c *Client) Errors() <-chan error {
 }
 
 // SessionID は現在のセッションIDを返す
-func (c *Client) SessionID() string {
+// セッションIDはCLIからの最初のメッセージ受信後に取得可能になる
+// まだ取得できていない場合はErrSessionIDNotReadyを返す
+func (c *Client) SessionID() (string, error) {
 	c.mu.RLock()
 	defer c.mu.RUnlock()
-	return c.sessionID
+	if c.sessionID == "" {
+		return "", ErrSessionIDNotReady
+	}
+	return c.sessionID, nil
+}
+
+// SessionIDReady はセッションIDが取得可能かどうかを返す
+func (c *Client) SessionIDReady() bool {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.sessionID != ""
 }
 
 // Close はクライアントをクローズする
@@ -491,8 +441,15 @@ func (s *Stream) Close() error {
 }
 
 // SessionID は現在のセッションIDを返す
-func (s *Stream) SessionID() string {
+// セッションIDはCLIからの最初のメッセージ受信後に取得可能になる
+// まだ取得できていない場合はErrSessionIDNotReadyを返す
+func (s *Stream) SessionID() (string, error) {
 	return s.client.SessionID()
+}
+
+// SessionIDReady はセッションIDが取得可能かどうかを返す
+func (s *Stream) SessionIDReady() bool {
+	return s.client.SessionIDReady()
 }
 
 // registerHooks はOptionsからフックを登録する
