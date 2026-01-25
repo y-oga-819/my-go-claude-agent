@@ -113,6 +113,10 @@ func (t *SubprocessTransport) buildArgs() []string {
 		args = append(args, "--input-format", "stream-json")
 	}
 
+	if t.config.PermissionPromptToolName != "" {
+		args = append(args, "--permission-prompt-tool", t.config.PermissionPromptToolName)
+	}
+
 	args = append(args, t.config.Args...)
 	return args
 }

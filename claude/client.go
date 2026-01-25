@@ -79,6 +79,12 @@ func (c *Client) Connect(ctx context.Context) (*Stream, error) {
 		StreamingMode: true, // 双方向ストリーミングモード
 	}
 
+	// CanUseToolコールバックが設定されている場合、CLIに権限確認を委譲するよう設定
+	// これにより、CLIはツール使用時にSDKへcontrol_request（can_use_tool）を送信する
+	if c.opts.CanUseTool != nil {
+		config.PermissionPromptToolName = "stdio"
+	}
+
 	c.transport = transport.NewSubprocessTransport(config)
 
 	// 接続

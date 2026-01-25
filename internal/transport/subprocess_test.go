@@ -66,6 +66,16 @@ func TestSubprocessTransport_buildArgs(t *testing.T) {
 				"--print", "--", "hello",
 			},
 		},
+		{
+			name: "with permission prompt tool",
+			config: Config{
+				PermissionPromptToolName: "stdio",
+			},
+			expectContain: []string{
+				"--output-format", "stream-json",
+				"--permission-prompt-tool", "stdio",
+			},
+		},
 	}
 
 	for _, tt := range tests {
