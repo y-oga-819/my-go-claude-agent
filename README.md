@@ -27,7 +27,7 @@ Claude Code CLIと通信し、プログラムからClaudeのエージェント�
 
 - Go 1.23以上
 - Claude Code CLI v2.0.0以上
-- Claudeサブスクリプション（Pro/Max）またはAnthropic APIキー
+- Claudeサブスクリプション（Pro/Max）
 
 ## インストール
 
