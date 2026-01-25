@@ -283,7 +283,8 @@ func TestClient_ExtractSessionIDFromRawMessage_System(t *testing.T) {
 
 func TestClient_ExtractSessionIDFromRawMessage_AlreadySet(t *testing.T) {
 	client := NewClient(nil)
-	client.sessionID = "existing-session"
+	existingSession := "existing-session"
+	client.sessionID.Store(&existingSession)
 
 	// 既にsessionIDが設定されている場合は上書きしない
 	rawMsg := transport.RawMessage{

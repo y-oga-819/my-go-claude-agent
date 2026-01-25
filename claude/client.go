@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sync"
+	"sync/atomic"
 
 	"github.com/y-oga-819/my-go-claude-agent/internal/hooks"
 	"github.com/y-oga-819/my-go-claude-agent/internal/protocol"
@@ -24,7 +25,9 @@ type Client struct {
 	protocol    *protocol.ProtocolHandler
 	hookManager *hooks.Manager
 
-	sessionID string
+	// sessionID はatomic.Pointerで管理（ロックフリー）
+	// Connect()時のデッドロックを回避するため、c.muとは独立して管理
+	sessionID atomic.Pointer[string]
 
 	msgChan   chan protocol.Message
 	errChan   chan error
@@ -161,15 +164,16 @@ func (c *Client) initialize(ctx context.Context) error {
 
 // extractSessionIDFromResponse はControlResponseからsessionIDを抽出する
 func (c *Client) extractSessionIDFromResponse(resp *protocol.ControlResponse) {
-	// 既にsessionIDが設定されている場合はスキップ
-	if c.sessionID != "" {
+	// 既にsessionIDが設定されている場合はスキップ（ロックフリー）
+	if c.sessionID.Load() != nil {
 		return
 	}
 
 	// Response.Responseがmap[string]anyの場合
 	if respData, ok := resp.Response.Response.(map[string]any); ok {
 		if sid, ok := respData["session_id"].(string); ok && sid != "" {
-			c.sessionID = sid
+			// CompareAndSwapで初回のみ設定（競合安全）
+			c.sessionID.CompareAndSwap(nil, &sid)
 		}
 	}
 }
@@ -203,19 +207,18 @@ func (c *Client) receiveLoop(ctx context.Context) {
 }
 
 // extractSessionIDFromRawMessage はRawMessageからsessionIDを抽出し、未設定の場合に設定する
+// ロックフリー設計: atomic.Pointerを使用してデッドロックを回避
 func (c *Client) extractSessionIDFromRawMessage(rawMsg transport.RawMessage) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	// 既にsessionIDが設定されている場合はスキップ
-	if c.sessionID != "" {
+	// 既にsessionIDが設定されている場合はスキップ（ロックフリー）
+	if c.sessionID.Load() != nil {
 		return
 	}
 
 	// resultメッセージからsession_idを取得
 	if rawMsg.Type == "result" {
 		if sid, ok := rawMsg.Data["session_id"].(string); ok && sid != "" {
-			c.sessionID = sid
+			// CompareAndSwapで初回のみ設定（競合安全）
+			c.sessionID.CompareAndSwap(nil, &sid)
 			return
 		}
 	}
@@ -224,7 +227,8 @@ func (c *Client) extractSessionIDFromRawMessage(rawMsg transport.RawMessage) {
 	if rawMsg.Type == "system" {
 		if data, ok := rawMsg.Data["data"].(map[string]any); ok {
 			if sid, ok := data["session_id"].(string); ok && sid != "" {
-				c.sessionID = sid
+				// CompareAndSwapで初回のみ設定（競合安全）
+				c.sessionID.CompareAndSwap(nil, &sid)
 			}
 		}
 	}
@@ -239,9 +243,12 @@ func (c *Client) Send(ctx context.Context, content string) error {
 		return fmt.Errorf("client is not connected")
 	}
 
+	// sessionIDを取得（ロックフリー）
+	sessionID := c.getSessionIDString()
+
 	// UserPromptSubmitフックをトリガー
 	hookInput := &hooks.Input{
-		SessionID:     c.sessionID,
+		SessionID:     sessionID,
 		HookEventName: string(hooks.EventUserPromptSubmit),
 		CWD:           c.opts.CWD,
 	}
@@ -259,7 +266,7 @@ func (c *Client) Send(ctx context.Context, content string) error {
 			Role:    "user",
 			Content: content,
 		},
-		SessionID: c.sessionID,
+		SessionID: sessionID,
 	}
 
 	data, err := json.Marshal(msg)
@@ -279,6 +286,9 @@ func (c *Client) SendToolResult(ctx context.Context, toolUseID string, result an
 		return fmt.Errorf("client is not connected")
 	}
 
+	// sessionIDを取得（ロックフリー）
+	sessionID := c.getSessionIDString()
+
 	msg := map[string]any{
 		"type": "user",
 		"message": map[string]any{
@@ -292,7 +302,7 @@ func (c *Client) SendToolResult(ctx context.Context, toolUseID string, result an
 				},
 			},
 		},
-		"session_id":         c.sessionID,
+		"session_id":         sessionID,
 		"parent_tool_use_id": toolUseID,
 	}
 
@@ -365,19 +375,28 @@ func (c *Client) Errors() <-chan error {
 // セッションIDはCLIからの最初のメッセージ受信後に取得可能になる
 // まだ取得できていない場合はErrSessionIDNotReadyを返す
 func (c *Client) SessionID() (string, error) {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	if c.sessionID == "" {
+	// ロックフリー: atomic.Pointerを使用
+	sid := c.sessionID.Load()
+	if sid == nil {
 		return "", ErrSessionIDNotReady
 	}
-	return c.sessionID, nil
+	return *sid, nil
 }
 
 // SessionIDReady はセッションIDが取得可能かどうかを返す
 func (c *Client) SessionIDReady() bool {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.sessionID != ""
+	// ロックフリー: atomic.Pointerを使用
+	return c.sessionID.Load() != nil
+}
+
+// getSessionIDString はsessionIDの文字列値を返す（未設定の場合は空文字列）
+// 内部ヘルパー関数（ロックフリー）
+func (c *Client) getSessionIDString() string {
+	sid := c.sessionID.Load()
+	if sid == nil {
+		return ""
+	}
+	return *sid
 }
 
 // Close はクライアントをクローズする
